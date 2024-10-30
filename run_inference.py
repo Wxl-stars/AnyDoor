@@ -149,9 +149,11 @@ def crop_back( pred, tar_image,  extra_sizes, tar_box_yyxx_crop):
 
 def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_scale = 5.0):
     item = process_pairs(ref_image, ref_mask, tar_image, tar_mask)
-    ref = item['ref'] * 255
-    tar = item['jpg'] * 127.5 + 127.5
-    hint = item['hint'] * 127.5 + 127.5
+    # 'extra_sizes': [512, 512, 512, 512]
+    # 'tar_box_yyxx_crop': [  0, 512,   0, 512]
+    ref = item['ref'] * 255  # ref object (224, 224, 3)
+    tar = item['jpg'] * 127.5 + 127.5  # scene img (512, 512, 3)
+    hint = item['hint'] * 127.5 + 127.5  # scene_img stich with hf_map
 
     hint_image = hint[:,:,:-1]
     hint_mask = item['hint'][:,:,-1] * 255
@@ -167,12 +169,12 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     hint = item['hint']
     num_samples = 1
 
-    control = torch.from_numpy(hint.copy()).float().cuda() 
+    control = torch.from_numpy(hint.copy()).float().cuda()   # scene_img stich with hf_map
     control = torch.stack([control for _ in range(num_samples)], dim=0)
     control = einops.rearrange(control, 'b h w c -> b c h w').clone()
 
 
-    clip_input = torch.from_numpy(ref.copy()).float().cuda() 
+    clip_input = torch.from_numpy(ref.copy()).float().cuda()  # ref object 
     clip_input = torch.stack([clip_input for _ in range(num_samples)], dim=0)
     clip_input = einops.rearrange(clip_input, 'b h w c -> b c h w').clone()
 
@@ -220,7 +222,7 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
 
 
 if __name__ == '__main__': 
-    '''
+    # '''
     # ==== Example for inferring a single image ===
     reference_image_path = './examples/TestDreamBooth/FG/01.png'
     bg_image_path = './examples/TestDreamBooth/BG/000000309203_GT.png'
@@ -231,7 +233,7 @@ if __name__ == '__main__':
     # You could use the demo of SAM to extract RGB-A image with masks
     # https://segment-anything.com/demo
     image = cv2.imread( reference_image_path, cv2.IMREAD_UNCHANGED)
-    mask = (image[:,:,-1] > 128).astype(np.uint8)
+    mask = (image[:,:,-1] > 128).astype(np.uint8)  # 由于ref_img本身就是黑底的单个物体
     image = image[:,:,:-1]
     image = cv2.cvtColor(image.copy(), cv2.COLOR_BGR2RGB)
     ref_image = image 
@@ -251,8 +253,8 @@ if __name__ == '__main__':
     vis_image = cv2.hconcat([ref_image, back_image, gen_image])
     
     cv2.imwrite(save_path, vis_image [:,:,::-1])
+    # '''
     '''
-    #'''
     # ==== Example for inferring VITON-HD Test dataset ===
 
     from omegaconf import OmegaConf
@@ -288,7 +290,7 @@ if __name__ == '__main__':
 
         vis_image = cv2.hconcat([ref_image, gt_image, gen_image])
         cv2.imwrite(gen_path, vis_image[:,:,::-1])
-    #'''
+    '''
 
     
 

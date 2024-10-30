@@ -10,7 +10,7 @@ from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, mak
 class DDIMSampler(object):
     def __init__(self, model, schedule="linear", **kwargs):
         super().__init__()
-        self.model = model
+        self.model = model  # ControlLDM
         self.ddpm_num_timesteps = model.num_timesteps
         self.schedule = schedule
 
@@ -53,10 +53,10 @@ class DDIMSampler(object):
 
     @torch.no_grad()
     def sample(self,
-               S,
-               batch_size,
-               shape,
-               conditioning=None,
+               S,  # ddim_steps
+               batch_size,  # num_samples
+               shape,  # shape = (4, H // 8, W // 8)
+               conditioning=None,  # cond = control(scene_img stich with hf_map)
                callback=None,
                normals_sequence=None,
                img_callback=None,
@@ -127,11 +127,15 @@ class DDIMSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None, dynamic_threshold=None,
                       ucg_schedule=None):
+        """
+            cond: control(scene_img stich with hf_map)
+            shape: shape of noise (B C H W)
+        """
         device = self.model.betas.device
         b = shape[0]
         #x_T 1,4,64,64
         if x_T is None:
-            img = torch.randn(shape, device=device)
+            img = torch.randn(shape, device=device)  # create noise
         else:
             img = x_T
 
@@ -149,12 +153,13 @@ class DDIMSampler(object):
         iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
 
         for i, step in enumerate(iterator):
-            index = total_steps - i - 1
+            index = total_steps - i - 1  # denosing的过程timestep是从大到小的，这里记录timestamp对应的index
             ts = torch.full((b,), step, device=device, dtype=torch.long)
 
             if mask is not None:
                 assert x0 is not None
-                img_orig = self.model.q_sample(x0, ts)  # TODO: deterministic forward pass?
+                # Denoising: DDPM.q_sample() cal x_0 from noise + timestamp
+                img_orig = self.model.q_sample(x0, ts)  # TODO: deterministic forward pass? 
                 img = img_orig * mask + (1. - mask) * img
 
             if ucg_schedule is not None:
@@ -183,16 +188,23 @@ class DDIMSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,
                       dynamic_threshold=None):
+        """
+            img: noise
+            c: control(scene_img stich with hf_map)
+            t: sampled tiemstamp
+            index: sampled timestamp对应的index
+        """
         b, *_, device = *x.shape, x.device
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
             model_output = self.model.apply_model(x, t, c)
         else:
+            # do classifer-free guidance
             model_t = self.model.apply_model(x, t, c)
             model_uncond = self.model.apply_model(x, t, unconditional_conditioning)
             model_output = model_uncond + unconditional_guidance_scale * (model_t - model_uncond)
 
-        if self.model.parameterization == "v":
+        if self.model.parameterization == "v":  # v_prediction
             e_t = self.model.predict_eps_from_z_and_v(x, t, model_output)
         else:
             e_t = model_output

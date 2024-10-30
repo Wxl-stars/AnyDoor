@@ -629,7 +629,7 @@ class LatentDiffusion(DDPM):
                 self.cond_stage_model = None
                 # self.be_unconditional = True
             else:
-                model = instantiate_from_config(config)
+                model = instantiate_from_config(config)  # DINO是在init的时候指定了projector是false
                 self.cond_stage_model = model.eval()
                 self.cond_stage_model.train = disabled_train
                 for param in self.cond_stage_model.parameters():

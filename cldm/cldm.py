@@ -20,6 +20,32 @@ from ldm.models.diffusion.ddim import DDIMSampler
 
 class ControlledUnetModel(UNetModel):
     def forward(self, x, timesteps=None, context=None, control=None, only_mid_control=False, **kwargs):
+        """
+            x: [1, 4, 64, 64]
+            timesteps: shape = [1]
+            context: [1, 257, 1024]
+            control: list(len=13)
+                torch.Size([1, 320, 64, 64])
+                ---------------------------- conv_in
+                torch.Size([1, 320, 64, 64])
+                torch.Size([1, 320, 64, 64])
+                torch.Size([1, 320, 32, 32])
+                ---------------------------- downsample x 1
+                torch.Size([1, 640, 32, 32])
+                torch.Size([1, 640, 32, 32])
+                torch.Size([1, 640, 16, 16])
+                ---------------------------- downsample x 2
+                torch.Size([1, 1280, 16, 16])
+                torch.Size([1, 1280, 16, 16])
+                ---------------------------- downsample x 3
+                torch.Size([1, 1280, 8, 8])
+                torch.Size([1, 1280, 8, 8])
+                ---------------------------- middle block
+                torch.Size([1, 1280, 8, 8])
+                ---------------------------- middle output
+                torch.Size([1, 1280, 8, 8])
+            only_mid_control: False
+        """
         hs = []
         with torch.no_grad():
             t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
@@ -165,6 +191,8 @@ class ControlNet(nn.Module):
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
+        print("channel_mult: ", channel_mult)
+        print("self.num_res_blocks: ", self.num_res_blocks)
         for level, mult in enumerate(channel_mult):
             for nr in range(self.num_res_blocks[level]):
                 layers = [
@@ -326,15 +354,22 @@ class ControlLDM(LatentDiffusion):
         return x, dict(c_crossattn=[c], c_concat=[control])
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
+        """
+            x_noisy: [1, 4, 64, 64]
+            t: shape = [1]
+            cond:
+                cond['c_crossattn']: list(len = 1), [1, 257, 1024]
+                cond['c_concat']: list(len = 1), [1, 4, 512, 512]
+        """
         assert isinstance(cond, dict)
         diffusion_model = self.model.diffusion_model
 
-        cond_txt = torch.cat(cond['c_crossattn'], 1)
+        cond_txt = torch.cat(cond['c_crossattn'], 1)  #! 为什么channel是4？？？已经转到latent space了？
 
         if cond['c_concat'] is None:
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=None, only_mid_control=self.only_mid_control)
         else:
-            control = self.control_model(x=x_noisy, hint=torch.cat(cond['c_concat'], 1), timesteps=t, context=cond_txt)
+            control = self.control_model(x=x_noisy, hint=torch.cat(cond['c_concat'], 1), timesteps=t, context=cond_txt)  # len(control) = 13
             control = [c * scale for c, scale in zip(control, self.control_scales)]
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=control, only_mid_control=self.only_mid_control)
         return eps
