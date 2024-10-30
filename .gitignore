@@ -7,6 +7,7 @@ image_log/
 #*.pth
 *.pt
 *.ckpt
+*.pth
 *.safetensors
 
 gradio_pose2image_private.py
