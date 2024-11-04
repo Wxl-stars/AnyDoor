@@ -130,11 +130,11 @@ class BaseDataset(Dataset):
         # Filtering background for the reference image
         ref_mask_3 = np.stack([ref_mask,ref_mask,ref_mask],-1)
         masked_ref_image = ref_image * ref_mask_3 + np.ones_like(ref_image) * 255 * (1-ref_mask_3)
-
+        # 从去除背景的ref img上抠出框和对应的shape-aware mask
         y1,y2,x1,x2 = ref_box_yyxx
         masked_ref_image = masked_ref_image[y1:y2,x1:x2,:]
         ref_mask = ref_mask[y1:y2,x1:x2]
-
+        # ref img 扩框
         ratio = np.random.randint(11, 15) / 10 
         masked_ref_image, ref_mask = expand_image_mask(masked_ref_image, ref_mask, ratio=ratio)
         ref_mask_3 = np.stack([ref_mask,ref_mask,ref_mask],-1)

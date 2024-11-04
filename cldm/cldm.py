@@ -313,7 +313,7 @@ class ControlNet(nn.Module):
         emb = self.time_embed(t_emb) # 1,1280
         
         # 1,320,64,64
-        guided_hint = self.input_hint_block(hint, emb, context)
+        guided_hint = self.input_hint_block(hint, emb, context)  # [1, 4, 512, 512] -> 1,320,64,64
         outs = []
 
         h = x.type(self.dtype)
@@ -455,6 +455,9 @@ class ControlLDM(LatentDiffusion):
         return samples, intermediates
 
     def configure_optimizers(self):
+        """
+           Set parameters for training.
+        """
         lr = self.learning_rate
         params = list(self.control_model.parameters())
         if not self.sd_locked:

@@ -1,15 +1,15 @@
 Train:
-  YoutubeVOS:
+  YoutubeVOS:  # https://youtube-vos.org/dataset/vos/
     image_dir: path/YTBVOS/train/JPEGImages/
     anno: path/YTBVOS/train/Annotations
     meta: path/YTBVOS/train/meta.json
 
-  YoutubeVIS:
+  YoutubeVIS:  # https://youtube-vos.org/dataset/vis/
     image_dir: path/youtubevis/train/JPEGImages/
     anno: path/youtubevis/train/Annotations/
     meta: path/youtubevis/train/meta.json
 
-  VIPSeg:
+  VIPSeg:  # https://paperswithcode.com/dataset/vipseg
     image_dir: path/VIPSeg/VIPSeg_720P/images/
     anno: path/VIPSeg/VIPSeg_720P/panomasksRGB/
 
