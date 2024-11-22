@@ -60,6 +60,14 @@ video_data = [dataset1, dataset3, dataset4, dataset7, dataset9, dataset10 ]
 tryon_data = [dataset8, dataset11]
 threed_data = [dataset5]
 
+# which in dataset???
+# ref : 去掉背景，做过aug的224x224x3的ref img
+# jpg : 512 x 512 x 3, 抠掉原始框的
+# hint : 512 x 512 x 4, [stich, mask]
+# extra_sizes : H1, W1, H2, W2
+# tar_box_yyxx_crop : target_crop of target full 的顶点
+# time_steps : 在数据集里就sample好了timestamp
+
 # The ratio of each dataset is adjusted by setting the __len__ 
 dataset = ConcatDataset( image_data + video_data + tryon_data +  threed_data + video_data + tryon_data +  threed_data  )
 dataloader = DataLoader(dataset, num_workers=8, batch_size=batch_size, shuffle=True)

@@ -50,13 +50,14 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
 
     # ref filter mask 
     ref_mask_3 = np.stack([ref_mask,ref_mask,ref_mask],-1)
-    masked_ref_image = ref_image * ref_mask_3 + np.ones_like(ref_image) * 255 * (1-ref_mask_3)
+    masked_ref_image = ref_image * ref_mask_3 + np.ones_like(ref_image) * 255 * (1-ref_mask_3)  # 背景变白
 
     y1,y2,x1,x2 = ref_box_yyxx
     masked_ref_image = masked_ref_image[y1:y2,x1:x2,:]
     ref_mask = ref_mask[y1:y2,x1:x2]
 
 
+    # 加缩放aug
     ratio = np.random.randint(12, 13) / 10
     masked_ref_image, ref_mask = expand_image_mask(masked_ref_image, ref_mask, ratio=ratio)
     ref_mask_3 = np.stack([ref_mask,ref_mask,ref_mask],-1)
@@ -92,6 +93,7 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     y1,y2,x1,x2 = tar_box_yyxx
 
     # collage
+    # 将ref resise到target box的大小
     ref_image_collage = cv2.resize(ref_image_collage, (x2-x1, y2-y1))
     ref_mask_compose = cv2.resize(ref_mask_compose.astype(np.uint8), (x2-x1, y2-y1))
     ref_mask_compose = (ref_mask_compose > 128).astype(np.uint8)
@@ -224,6 +226,11 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
 if __name__ == '__main__': 
     # '''
     # ==== Example for inferring a single image ===
+    # reference_image_path = './ref_obj/test_0_image_mask.png'
+    # bg_image_path = './hf_test/BG/19376.jpg'
+    # bg_mask_path = 'test_mask.png'
+    # save_path = './examples/TestDreamBooth/GEN/gen_res_test.png'
+
     reference_image_path = './examples/TestDreamBooth/FG/01.png'
     bg_image_path = './examples/TestDreamBooth/BG/000000309203_GT.png'
     bg_mask_path = './examples/TestDreamBooth/BG/000000309203_mask.png'
@@ -233,8 +240,10 @@ if __name__ == '__main__':
     # You could use the demo of SAM to extract RGB-A image with masks
     # https://segment-anything.com/demo
     image = cv2.imread( reference_image_path, cv2.IMREAD_UNCHANGED)
+    h, w, c = image.shape
     mask = (image[:,:,-1] > 128).astype(np.uint8)  # 由于ref_img本身就是黑底的单个物体
-    image = image[:,:,:-1]
+    if c == 4:
+        image = image[:,:,:-1]
     image = cv2.cvtColor(image.copy(), cv2.COLOR_BGR2RGB)
     ref_image = image 
     ref_mask = mask
