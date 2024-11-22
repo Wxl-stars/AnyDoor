@@ -220,8 +220,8 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio = 0.8, ena
     return item
 
 
-ref_dir='./examples/Gradio/FG'
-image_dir='./examples/Gradio/BG'
+ref_dir='./hf_test/FG'
+image_dir='./hf_test/BG'
 ref_list=[os.path.join(ref_dir,file) for file in os.listdir(ref_dir) if '.jpg' in file or '.png' in file or '.jpeg' in file ]
 ref_list.sort()
 image_list=[os.path.join(image_dir,file) for file in os.listdir(image_dir) if '.jpg' in file or '.png' in file or '.jpeg' in file]
@@ -247,6 +247,13 @@ def run_local(base,
     ref_mask = np.asarray(ref_mask)
     ref_mask = np.where(ref_mask > 128, 1, 0).astype(np.uint8)
 
+    import time
+    timestamp = str(int(time.time()))
+
+    # save to disk
+    cv2.imwrite(f"./hf_test/test_{timestamp}_ref_image.png", ref_image)
+    cv2.imwrite(f"./hf_test/test_{timestamp}_ref_mask.png", ref_mask * 255)
+
     if ref_mask.sum() == 0:
         raise gr.Error('No mask for the reference image.')
 
@@ -255,10 +262,17 @@ def run_local(base,
 
     if reference_mask_refine:
         ref_mask = process_image_mask(ref_image, ref_mask)
+        cv2.imwrite(f"./hf_test/test_{timestamp}_refine_mask.png", ref_mask*255)
+
+    ref_image_mask = ref_image * (np.stack([ref_mask, ref_mask, ref_mask], -1))
+    cv2.imwrite(f"./hf_test/test_{timestamp}_image_mask.png", ref_image_mask[:, :, ::-1])
 
     synthesis = inference_single_image(ref_image.copy(), ref_mask.copy(), image.copy(), mask.copy(), *args)
     synthesis = torch.from_numpy(synthesis).permute(2, 0, 1)
     synthesis = synthesis.permute(1, 2, 0).numpy()
+
+    cv2.imwrite(f"./hf_test/{timestamp}.png", synthesis[:, :, ::-1])
+    cv2.imwrite(f"./hf_test/{timestamp}_mask.png", mask * 255)
     return [synthesis]
 
 
@@ -288,10 +302,25 @@ with gr.Blocks() as demo:
         gr.Markdown("# Upload / Select Images for the Background (left) and Reference Object (right)")
         gr.Markdown("### You could draw coarse masks on the background to indicate the desired location and shape.")
         gr.Markdown("### <u>Do not forget</u> to annotate the target object on the reference image.")
+        # with gr.Row():
+        #     box_info = gr.Textbox(headers=["Numbers"], datatype="number", row_count=5)
+        # run_local_button = gr.Button(label="Generate", value="Generate Box")
+        # run_local_button.click(fn=)
+
         with gr.Row():
             base = gr.Image(label="Background", source="upload", tool="sketch", type="pil", height=512, brush_color='#FFFFFF', mask_opacity=0.5)
             ref = gr.Image(label="Reference", source="upload", tool="sketch", type="pil", height=512, brush_color='#FFFFFF', mask_opacity=0.5)
         run_local_button = gr.Button(label="Generate", value="Run")
+
+        # with gr.Row():
+        #     x = gr.Number(label="x")
+        #     y = gr.Number(label="y")
+        #     z = gr.Number(label="z")
+        #     l = gr.Number(label="l")
+        #     w = gr.Number(label="w")
+        #     h = gr.Number(label="h")
+        #     theta = gr.Number(label="theta")
+        #     h = gr.Textbox(label="z", interactive=False)
 
         with gr.Row():
             with gr.Column():
