@@ -26,8 +26,9 @@ from open3d import geometry
 from datetime import date
 from turbojpeg import TurboJPEG
 
+
 """
-bash scripts/inference_e2e_for_vlm.sh 2 s3://sdagent-shard-bj-baiducloud/wuxiaolei/static/bev_range_-2_2_0_50/2024-11-27.json
+bash scripts/inference_e2e_for_vlm_template.sh 2 s3://sdagent-shard-bj-baiducloud/wuxiaolei/static/bev_range_-2_2_0_50/2024-11-27.json
 
 
 for e2e
@@ -38,12 +39,11 @@ for e2e
 """
 
 """
-for e171_static
---scene_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/static/bev_range_-2_2_0_50/2024-11-27.json
+--scene_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/e2e_for_vlm_-2_2_0_50.json
 # --ref_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_obj_info.json
 --ref_json /gpfs/shared_files/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json
+--save_path s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/vlm_empty_scene_fill.json
 """
-
 
 
 save_memory = False
@@ -73,7 +73,7 @@ BEV_height = int((BEV_RANGE[3] - BEV_RANGE[2]) / BEV_RESOLUTION)
 # Y_THREH_MIN = 30
 IMG_H = 1080
 IMG_W = 1920
-PREFIX = "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/anydoor_generated/random/"
+PREFIX = "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/anydoor_generated/template/"
 TODAY = str(date.today())
 BOX_TEMP = {
     'track_index': 1,
@@ -580,7 +580,6 @@ def add_occ_attr(boxes):
         else:
             cur_box['occluded'] = "occluded_full"
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Scripts to generate data for vlm using AnyDoor"
@@ -621,17 +620,17 @@ if __name__ == '__main__':
         json_last_name = json_last_name.replace(".json", "_fill_fake.json")
         json_save_path = refile.smart_path_join(PREFIX, TODAY, json_last_name)
     else:
-        json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
+        json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_template{args.rank_id}.json")
 
+    
     img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs")
     json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
-    
 
     scene_data_list = load_data(args.scene_json)
+    scene_data_list = scene_data_list[:10]
     logger.info(f"Total {len(scene_data_list)} datas.")
-    scene_data_list = scene_data_list[-2000:]
-    ref_data = json.load(refile.smart_open(args.ref_json))    
-    local_dir = f"test/{TODAY}_random"
+    ref_data = json.load(refile.smart_open(args.ref_json))
+    local_dir = f"test/{TODAY}_template"
     if not os.path.exists(local_dir):
         os.mkdir(local_dir)
 
@@ -672,83 +671,48 @@ if __name__ == '__main__':
         # bev_mask = np.array(scene_data["bev_mask"])  # ! load 提前计算好的bev mask
         bboxes = scene_data['bboxes']
         bev_mask= generate_bev_mask(bboxes, BEV_RANGE, BEV_RESOLUTION)
-        # cv2.imwrite("bev_mask.png", bev_mask * 255)
-        # cv2.imwrite(f"test/{nori_id}_{idx}_bev_mask.png", bev_mask * 255)
-        # randm pick obj
-        # ref_obj = random.randint(1, len(ref_obj_class))  #? 随机obj的个数好像不太好
-        cycle_num = random.randint(1, CYCLE_NUMS)
-        coor_3d_list = []
-        coor_2d_list = []
-        coors = np.column_stack(np.where(bev_mask == 1))
-        coors = np.array([
-            [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
-            for y,x in coors
-        ])
-        y_upper_bound = np.max(coors[:, 1])
+        cv2.imwrite(refile.smart_path_join(local_dir, f"{nori_id}_mask.png"), bev_mask * 255)
+        # if random.choice([True, False, False, False]):
+        # if True:
+        ref_obj_class = random.choice(["cone", "collision_bar", "anti_collision_barrel"])
+        ref_path = random.choice(ref_data[ref_obj_class]["ref_path"])
+        ref_img = refile.smart_load_image(ref_path)  # BGR
+        ref_img = cv2.cvtColor(ref_img.copy(), cv2.COLOR_BGR2RGB)
+        ref_lwh = ref_data[ref_obj_class]["lwh"]
+        # 竖排：需要col，delta，起始y [由间隔算数量]
+        y_lower_bound = int((7 - BEV_RANGE[2]) / BEV_RESOLUTION)
+        y_upper_bound = int((10 - BEV_RANGE[2]) / BEV_RESOLUTION)
+        bev_mask[:y_lower_bound, :] = 0
 
-        for i in range(cycle_num):
+        # import IPython; IPython.embed()
+        delta = random.uniform(1, 5)  #! random1
+        delta = delta * ref_data[ref_obj_class]["delta_weight_y"]
+        bev_delta = int(delta / BEV_RESOLUTION)
+        # 贴特殊成排成列的锥桶
+        col_indices = [j for j in range(bev_mask.shape[1]) if np.all(bev_mask[:, y_lower_bound:j] == 1)]  # 竖排全为1
+        # row_indices = [i for i in range(bev_mask.shape[0]) if np.all(bev_mask[i, :] == 1)]  # 横排全为1
+        col = random.choice(col_indices)
+        start_row = random.randint(y_lower_bound, y_upper_bound)   #! random2
+        y_lower_bound = int((25 - BEV_RANGE[2]) / BEV_RESOLUTION)
+        y_upper_bound = int((min(ref_data[ref_obj_class]["upper_bound_y"], 35) - BEV_RANGE[2]) / BEV_RESOLUTION)
+        end_row = random.randint(y_lower_bound, y_upper_bound)  #! random3
+        i = 0
+        for row in range(end_row, start_row, -bev_delta):
+            i += 1
             if gen_image is not None:
                 scene_img = copy.deepcopy(gen_image)
+
+            coors = np.array(
+                [BEV_RANGE[0] + col * BEV_RESOLUTION, BEV_RANGE[2] + row * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
+            )
             cur_box = copy.deepcopy(BOX_TEMP)
-            # 随机选取ref obj
-            #! temp: 夜间数据只用水马来贴
-            if json_date >= "190000":
-                ref_obj_class = "water_horse"
-            else:
-                ref_obj_class = random.choice(ref_obj_classes)
-            ref_path = random.choice(ref_data[ref_obj_class]["ref_path"])
-            ref_lwh = ref_data[ref_obj_class]["lwh"]
-            ref_img = refile.smart_load_image(ref_path)  # BGR
-            # update class
             cur_box["class"] = ref_obj_class
-            # 根据ref obj lwn，生成3d坐标
-            # 直接在bev mask上采样坐标
-            # y [0, 10]区域内mask
-            y_upper_bound = y_upper_bound if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
-            y_lower_bound = min((CYCLE_NUMS - i) * 10,  min(y_upper_bound - 5, RFU_CORE_BOX[2]))  # 0:30, 1:20, 2:10
-            start_y = int((y_lower_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
-            end_y = int((y_upper_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
-            cur_mask = np.zeros_like(bev_mask)
-            cur_mask[start_y:end_y, 0:BEV_width] = 1
-            bev_mask = bev_mask * cur_mask
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
-            coors = np.column_stack(np.where(bev_mask == 1))
-            coors = np.array([
-                [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
-                for y,x in coors
-            ])
-            if len(coors) == 0:
-                print(f"error: idx({idx}  nori_id({nori_id})   cycle_index({i})  y_upper_bound({y_upper_bound})  y_lower_bound({y_lower_bound})")
-                continue
-            center_x, center_y = coors[np.random.choice(coors.shape[0])]
-
-
-            # cycle_flag = True
-            # while cycle_flag:
-            #     center_x = random.uniform(RFU_CORE_BOX[0], RFU_CORE_BOX[1])
-            #     # NOTE: 后续循环只能比上次更近
-            #     y_upper_bound = RFU_CORE_BOX[3] if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
-            #     # y_lower_bound = RFU_CORE_BOX[2] if len(coor_3d_list) > 0 else 
-            #     y_lower_bound = (CYCLE_NUMS - i) * 10  # 0:30, 1:20, 2:10
-            #     # 由于防撞柱比较小，限制最远距离
-            #     if ref_obj_class == "collision_bar":
-            #         y_upper_bound = min(35, y_upper_bound)
-            #     # center_y = random.uniform(RFU_CORE_BOX[2], RFU_CORE_BOX[3])
-            #     center_y = random.uniform(y_lower_bound, y_upper_bound)
-            #     center = np.array([center_x, center_y, ref_lwh[2]/2] + ref_lwh + [0])
-            #     # 确保生成的3d坐标不在动态目标上
-            #     overlap, bev_mask, new_box_mask = check_new_box_in_bev_mask(center, bev_mask)
-            #     cycle_flag = (not overlap)  # overlap=True: 不相交（停止循环）  overlap=False: 相交（接着循环）
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_box_mask_all.png", new_box_mask*255)
-            # total_mask = bev_mask | new_box_mask
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_mask_all.png", total_mask*255)
+            center_x, center_y = coors
 
             # update influence
-            # cur_box["influence"] = "avoid"
             center = np.array([center_x, center_y, ref_lwh[2]/2])
             cur_box["influence"] = get_label(center)
-            coor_3d_list.append(center)
+            # coor_3d_list.append(center)
             # 默认朝向
             yaw = np.zeros(3)  # xyz euler
             yaw[2] = 0
@@ -760,7 +724,7 @@ if __name__ == '__main__':
             cur_box["rects"]["ymin"] = y1
             cur_box["rects"]["xmax"] = x2
             cur_box["rects"]["ymax"] = y2
-            coor_2d_list.append(np.array([x1, y1, x2, y2]))
+            # coor_2d_list.append(np.array([x1, y1, x2, y2]))
             #! 需要check坐标的可行性
 
             # 根据3d坐标生成scene mask
@@ -778,7 +742,7 @@ if __name__ == '__main__':
                 ref_img = ref_img[:,:,:-1]
             else:
                 mask = (np.sum(ref_img, axis=2) > 1).astype(np.uint8)
-            ref_img = cv2.cvtColor(ref_img.copy(), cv2.COLOR_BGR2RGB)
+            # ref_img = cv2.cvtColor(ref_img.copy(), cv2.COLOR_BGR2RGB)
             ref_image = ref_img 
             ref_mask = mask
 
@@ -789,24 +753,23 @@ if __name__ == '__main__':
             # background mask 
             tar_mask = scene_mask[:,:,0] > 128
             tar_mask = tar_mask.astype(np.uint8)
-            
+
             gen_image = inference_single_image(ref_image, ref_mask, back_image.copy(), tar_mask)
-            # cv2.imwrite(f"test/test_{i}_gen.png", gen_image[:, :, ::-1])
 
             # save img to check 
             h,w = back_image.shape[0], back_image.shape[0]
             ref_image = cv2.resize(ref_image, (w,h))
             back_display = copy.deepcopy(back_image)
-            cv2.rectangle(back_display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
-            label = cur_box["influence"]
-            cv2.putText(back_display, f"({center} label:{label})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
+            # cv2.rectangle(back_display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
+            # label = cur_box["influence"]
+            # cv2.putText(back_display, f"({center} label:{label})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
             vis_image = cv2.hconcat([ref_image, back_display, gen_image])
             # cv2.imwrite(f"test/test_{nori_id}_{i}_all.png", vis_image[:,:,::-1])
-            cv2.imwrite(refile.smart_path_join(local_dir, f"{nori_id}_{i}_all.png"), vis_image[:,:,::-1])
+            # cv2.imwrite(refile.smart_path_join(local_dir, f"{nori_id}_{i}_all.png"), vis_image[:,:,::-1])
 
             # fill label info 
             new_scene_data[nori_id]["labels"]["boxes"].append(cur_box)
-        
+                    
         # 添加遮挡属性
         if len(new_scene_data[nori_id]["labels"]["boxes"]) > 1:
             add_occ_attr(new_scene_data[nori_id]["labels"]["boxes"])
@@ -825,8 +788,8 @@ if __name__ == '__main__':
 
     with refile.smart_open(json_save_path, "w") as f:
         json.dump(new_scene_data, f, indent=2)
-    
-    logger.info(f"success saving to {json_save_path}")
+
+    logger.info(f"success saving [json data] to : {json_save_path}")
     logger.info(f"success saving [images] to : {img_dir}")
     
 
