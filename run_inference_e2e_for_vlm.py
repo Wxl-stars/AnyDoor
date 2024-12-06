@@ -23,7 +23,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 from pyquaternion import Quaternion
 from open3d import geometry
-from datetime import date
+from datetime import date, datetime
 from turbojpeg import TurboJPEG
 
 """
@@ -61,16 +61,22 @@ model.load_state_dict(load_state_dict(model_ckpt, location='cuda'))
 model = model.cuda()
 ddim_sampler = DDIMSampler(model)
 
-RFU_CORE_BOX = [-2, 2, 10, 50]  # 左右后前
-CYCLE_NUMS = 3
+# for e171 static
+RFU_CORE_BOX = [-6, 6, 10, 100]  # 左右后前，核心区域，目前就y_min有用到
+CYCLE_NUMS = 20  # 一张图内，贴的数量上限
 HALF_LANE = 1.875
-BEV_RANGE = [-2, 2, 0, 50]
+BEV_RANGE = [-6, 6, 0, 100]
+# for vlm
+# RFU_CORE_BOX = [-2, 2, 10, 50]   # 左右后前，核心区域，目前就y_min有用到
+# CYCLE_NUMS = 10  # 一张图内，贴的数量上限
+# HALF_LANE = 1.875
+# BEV_RANGE = [-2, 2, 0, 50]
+
 BEV_RESOLUTION = 0.02
 EGO_px = int((0 - BEV_RANGE[0]) / BEV_RESOLUTION)
 EGO_py = int((0 - BEV_RANGE[2]) / BEV_RESOLUTION)
 BEV_width = int((BEV_RANGE[1] - BEV_RANGE[0]) / BEV_RESOLUTION)
 BEV_height = int((BEV_RANGE[3] - BEV_RANGE[2]) / BEV_RESOLUTION)
-# Y_THREH_MIN = 30
 IMG_H = 1080
 IMG_W = 1920
 PREFIX = "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/anydoor_generated/random/"
@@ -186,22 +192,30 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     ref_mask_3 = np.stack([ref_mask_compose,ref_mask_compose,ref_mask_compose],-1)
     ref_image_collage = sobel(masked_ref_image_compose, ref_mask_compose/255)
 
+    # display = tar_image.copy()
     # ========= Target ===========
     tar_box_yyxx = get_bbox_from_mask(tar_mask)
+    # cv2.rectangle(display, (tar_box_yyxx[2],tar_box_yyxx[0]), (tar_box_yyxx[3],tar_box_yyxx[1]), (255, 0, 0), 2, 2)  # b
     # print("0: ", tar_box_yyxx, tar_box_yyxx[1] - tar_box_yyxx[0], tar_box_yyxx[3] - tar_box_yyxx[2])
-    tar_box_yyxx = expand_bbox(tar_mask, tar_box_yyxx, ratio=[1.1,1.2])
+    # tar_box_yyxx = expand_bbox(tar_mask, tar_box_yyxx, ratio=[1.1,1.2])  #! 删掉第一次扩框
     # print("1: ", tar_box_yyxx, tar_box_yyxx[1] - tar_box_yyxx[0], tar_box_yyxx[3] - tar_box_yyxx[2])
+    # cv2.rectangle(display, (tar_box_yyxx[2],tar_box_yyxx[0]), (tar_box_yyxx[3],tar_box_yyxx[1]), (0, 255, 0), 2, 2)  # g
 
     # crop
     tar_box_yyxx_crop =  expand_bbox(tar_image, tar_box_yyxx, ratio=[1.5, 3])    #1.2 1.6
+
+    # cv2.rectangle(display, (tar_box_yyxx_crop[2],tar_box_yyxx_crop[0]), (tar_box_yyxx_crop[3],tar_box_yyxx_crop[1]), (0, 0, 255), 2, 2)  # r
     # print("0: ", tar_box_yyxx_crop, tar_box_yyxx_crop[1] - tar_box_yyxx_crop[0], tar_box_yyxx_crop[3] - tar_box_yyxx_crop[2])
     tar_box_yyxx_crop = box2squre(tar_image, tar_box_yyxx_crop) # crop box
+    # cv2.rectangle(display, (tar_box_yyxx_crop[2],tar_box_yyxx_crop[0]), (tar_box_yyxx_crop[3],tar_box_yyxx_crop[1]), (255, 0, 255), 2, 2)  # 粉色
     # print("0: ", tar_box_yyxx_crop, tar_box_yyxx_crop[1] - tar_box_yyxx_crop[0], tar_box_yyxx_crop[3] - tar_box_yyxx_crop[2])
     y1,y2,x1,x2 = tar_box_yyxx_crop
 
     cropped_target_image = tar_image[y1:y2,x1:x2,:]
     tar_box_yyxx = box_in_box(tar_box_yyxx, tar_box_yyxx_crop)
+    # cv2.rectangle(display, (tar_box_yyxx[2],tar_box_yyxx[0]), (tar_box_yyxx[3],tar_box_yyxx[1]), (255, 255, 0), 2, 2)  # 青涩
     y1,y2,x1,x2 = tar_box_yyxx
+    # cv2.imwrite("test__.png", display)
 
     # collage
     # 将ref resise到target box的大小
@@ -268,12 +282,12 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     ref = item['ref'] * 255  # ref object (224, 224, 3)
     tar = item['jpg'] * 127.5 + 127.5  # scene img (512, 512, 3)
     hint = item['hint'] * 127.5 + 127.5  # scene_img stich with hf_map
-    # cv2.imwrite("test_hint.png", hint)
 
     hint_image = hint[:,:,:-1]
     hint_mask = item['hint'][:,:,-1] * 255
     hint_mask = np.stack([hint_mask,hint_mask,hint_mask],-1)
     ref = cv2.resize(ref.astype(np.uint8), (512,512))
+    # cv2.imwrite("test_hint.png", hint_image)
 
     seed = random.randint(0, 65535)
     if save_memory:
@@ -428,10 +442,21 @@ def wether_add_bordar(corners):
     elif width in intersection:
         corners = np.concatenate((corners, np.array([[width, height]])))
     return corners
+
+def anticlockwise_order_points(corners):
+    # 计算中心点
+    center = np.mean(corners, axis=0)
+
+    # 计算每个点相对于中心的角度
+    angles = np.arctan2(corners[:, 1] - center[1], corners[:, 0] - center[0])
+
+    # 根据角度排序点
+    sorted_indices = np.argsort(angles)  # 默认从小到大排序 (逆时针)
+    sorted_points = corners[sorted_indices]
+    return sorted_points
     
 
-
-def generate_bev_mask(bboxes, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION):
+def generate_bev_mask(bev_mask, bboxes, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION, ratio=2):
     """
     Generate BEV mask from 3D bounding boxes.
 
@@ -446,12 +471,15 @@ def generate_bev_mask(bboxes, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION):
     # Define BEV dimensions
     xmin, xmax, ymin, ymax = bev_range
     width = int((xmax - xmin) / resolution)
-    height = int((ymax - ymin) / resolution)
-    bev_mask = np.ones((height, width), dtype=np.uint8)
+    height = int((ymax - ymin) / resolution)    
 
     for bbox in bboxes:
-        cur_mask = np.zeros((height, width), dtype=np.uint8)
+        cur_mask = np.ones((height, width), dtype=np.uint8)
         x, y, _, w, l, _, yaw = bbox
+
+        # 扩框
+        w *= ratio
+        l *= ratio
         
         # Calculate corners in world coordinates
         corners = np.array([
@@ -474,36 +502,41 @@ def generate_bev_mask(bboxes, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION):
         cv2.fillPoly(cur_mask, [pixel_corners], 0)
         if np.all(cur_mask == 1):
             continue
-        bev_mask = bev_mask | cur_mask
+        bev_mask = bev_mask * cur_mask
         # cv2.fillPoly(bev_mask, [pixel_corners], 0)
 
         # 计算前角交叉点
         pixel_corners = pixel_corners[pixel_corners[:, 1].argsort()]
+        # pixel_corners = pixel_corners[np.lexsort((pixel_corners[:, 0], pixel_corners[:, 1]))]
         origin = (EGO_px, EGO_py)
-        intersection_A = compute_boundary_intersection(origin, pixel_corners[0], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
-        intersection_B = compute_boundary_intersection(origin, pixel_corners[1], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        intersection_A = compute_boundary_intersection(origin, pixel_corners[0], bev_range[:2], bev_range[2:])
+        intersection_B = compute_boundary_intersection(origin, pixel_corners[1], bev_range[:2], bev_range[2:])
         if intersection_A is not None and intersection_B is not None:
             intersection_A = np.array(intersection_A)[None, :]
             intersection_B = np.array(intersection_B)[None, :]
             corners = np.concatenate((intersection_A, intersection_B, pixel_corners[:2]), axis=0)
             intersections = corners[:2]
-            corners = corners[corners[:, 0].argsort()]
+            # corners = corners[corners[:, 0].argsort()]
+            corners = anticlockwise_order_points(corners)
             cv2.fillPoly(bev_mask, [corners], 0)
             corners = wether_add_bordar(intersections)
+            corners = anticlockwise_order_points(corners)
             cv2.fillPoly(bev_mask, [corners], 0)
             # cv2.imwrite("test_2.png", bev_mask*255)
 
         # 计算后角交叉点
-        intersection_A = compute_boundary_intersection(origin, pixel_corners[2], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
-        intersection_B = compute_boundary_intersection(origin, pixel_corners[3], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        intersection_A = compute_boundary_intersection(origin, pixel_corners[2], bev_range[:2], bev_range[2:])
+        intersection_B = compute_boundary_intersection(origin, pixel_corners[3], bev_range[:2], bev_range[2:])
         if intersection_A is not None and intersection_B is not None:
             intersection_A = np.array(intersection_A)[None, :]
             intersection_B = np.array(intersection_B)[None, :]
             corners = np.concatenate((intersection_A, intersection_B, pixel_corners[2:]), axis=0)
             intersections = corners[:2]
-            corners = corners[corners[:, 0].argsort()]
+            # corners = corners[corners[:, 0].argsort()]
+            corners = anticlockwise_order_points(corners)
             cv2.fillPoly(bev_mask, [corners], 0)
             corners = wether_add_bordar(intersections)
+            corners = anticlockwise_order_points(corners)
             cv2.fillPoly(bev_mask, [corners], 0)
             # cv2.imwrite("test_3.png", bev_mask*255)
 
@@ -590,6 +623,7 @@ def parse_args():
     parser.add_argument("--scene_json", type=str, required=True, default=None)
     parser.add_argument("--ref_json", type=str, required=False, default="/gpfs/shared_files/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json")
     parser.add_argument("--save_path", type=str, required=False, default=None)
+    parser.add_argument("--save_local", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -615,6 +649,12 @@ def load_data(data_json):
 if __name__ == '__main__': 
     # 1. Preparasion 
     args = parse_args()
+    if args.save_local:
+        time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        local_dir = f"test/{time}_random"
+        if not os.path.exists(local_dir):
+            os.mkdir(local_dir)
+            logger.info(f"generated imgs saved to: {local_dir}")
 
     if args.save_path is not None:
         json_last_name = args.save_path.split("-")[-1]
@@ -623,23 +663,24 @@ if __name__ == '__main__':
     else:
         json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
 
-    img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs")
+    img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs_800w")
     json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
     
 
     scene_data_list = load_data(args.scene_json)
     logger.info(f"Total {len(scene_data_list)} datas.")
-    scene_data_list = scene_data_list[-2000:]
+    scene_data_list = scene_data_list[:2000]
     ref_data = json.load(refile.smart_open(args.ref_json))    
-    local_dir = f"test/{TODAY}_random"
-    if not os.path.exists(local_dir):
-        os.mkdir(local_dir)
 
     new_scene_data = dict()
     jpeg = TurboJPEG()
 
     # 2. prepare(random create) input data
     ref_obj_classes = list(ref_data.keys())
+
+    xmin, xmax, ymin, ymax = BEV_RANGE
+    width = int((xmax - xmin) / BEV_RESOLUTION)
+    height = int((ymax - ymin) / BEV_RESOLUTION)
 
     # multi-process
     if args.rank_id is not None and args.world_size is not None:
@@ -649,7 +690,9 @@ if __name__ == '__main__':
         step = 1
         begin = 0
 
-    # for nori_id in tqdm(scene_keys[:1000]):
+    # 控制img resolution
+    scale = 3
+
     for idx in tqdm(range(begin, len(scene_data_list)-1, step)):
         scene_data = scene_data_list[idx]
         nori_id = scene_data["nori_id"]
@@ -663,29 +706,29 @@ if __name__ == '__main__':
         # prepare scene img
         scene_img_path = scene_data["img_path"]
         scene_img = refile.smart_load_image(scene_img_path)  # BGR
-        # cv2.imwrite("scene_img.png", scene_img)
-        # cv2.imwrite(f"test/{nori_id}_{idx}_scene_img.png", scene_img)
+        scene_img = cv2.resize(scene_img, (1920 * scale, 1080 * scale))
         scene_img = cv2.cvtColor(scene_img, cv2.COLOR_BGR2RGB)
         # prepare transformation
         trans_rfu2cam = get_trans_rfu2cam(calib_info["extrinsic"])
         K = get_camera_intrinsic(calib_info["intrinsic"])
+        K[:2] = K[:2] * scale
         # bev_mask = np.array(scene_data["bev_mask"])  # ! load 提前计算好的bev mask
         bboxes = scene_data['bboxes']
-        bev_mask= generate_bev_mask(bboxes, BEV_RANGE, BEV_RESOLUTION)
-        # cv2.imwrite("bev_mask.png", bev_mask * 255)
-        # cv2.imwrite(f"test/{nori_id}_{idx}_bev_mask.png", bev_mask * 255)
+        bev_mask = np.ones((height, width), dtype=np.uint8)
+        # mask掉例自车较近的一块区域
+        y_lower_bound = RFU_CORE_BOX[2]
+        end_y =  int((y_lower_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
+        bev_mask[0:end_y,  :] = 0
+        # 根据动态目标的3d框生成mask
+        bev_mask= generate_bev_mask(bev_mask, bboxes, BEV_RANGE, BEV_RESOLUTION, ratio=1.5)
+        empty_ratio = bev_mask.mean()
+
         # randm pick obj
         # ref_obj = random.randint(1, len(ref_obj_class))  #? 随机obj的个数好像不太好
-        cycle_num = random.randint(1, CYCLE_NUMS)
+        upper_num = max(int(CYCLE_NUMS * empty_ratio), 3)
+        cycle_num = random.randint(1, upper_num)
         coor_3d_list = []
         coor_2d_list = []
-        coors = np.column_stack(np.where(bev_mask == 1))
-        coors = np.array([
-            [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
-            for y,x in coors
-        ])
-        y_upper_bound = np.max(coors[:, 1])
-
         for i in range(cycle_num):
             if gen_image is not None:
                 scene_img = copy.deepcopy(gen_image)
@@ -702,50 +745,16 @@ if __name__ == '__main__':
             # update class
             cur_box["class"] = ref_obj_class
             # 根据ref obj lwn，生成3d坐标
-            # 直接在bev mask上采样坐标
-            # y [0, 10]区域内mask
-            y_upper_bound = y_upper_bound if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
-            y_lower_bound = min((CYCLE_NUMS - i) * 10,  min(y_upper_bound - 5, RFU_CORE_BOX[2]))  # 0:30, 1:20, 2:10
-            start_y = int((y_lower_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
-            end_y = int((y_upper_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
-            cur_mask = np.zeros_like(bev_mask)
-            cur_mask[start_y:end_y, 0:BEV_width] = 1
-            bev_mask = bev_mask * cur_mask
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
+            # 直接在bev mask上随机采样坐标
             coors = np.column_stack(np.where(bev_mask == 1))
-            coors = np.array([
-                [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
-                for y,x in coors
-            ])
-            if len(coors) == 0:
-                print(f"error: idx({idx}  nori_id({nori_id})   cycle_index({i})  y_upper_bound({y_upper_bound})  y_lower_bound({y_lower_bound})")
+            try:
+                coor = coors[np.random.choice(coors.shape[0])]
+            except:
                 continue
-            center_x, center_y = coors[np.random.choice(coors.shape[0])]
-
-
-            # cycle_flag = True
-            # while cycle_flag:
-            #     center_x = random.uniform(RFU_CORE_BOX[0], RFU_CORE_BOX[1])
-            #     # NOTE: 后续循环只能比上次更近
-            #     y_upper_bound = RFU_CORE_BOX[3] if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
-            #     # y_lower_bound = RFU_CORE_BOX[2] if len(coor_3d_list) > 0 else 
-            #     y_lower_bound = (CYCLE_NUMS - i) * 10  # 0:30, 1:20, 2:10
-            #     # 由于防撞柱比较小，限制最远距离
-            #     if ref_obj_class == "collision_bar":
-            #         y_upper_bound = min(35, y_upper_bound)
-            #     # center_y = random.uniform(RFU_CORE_BOX[2], RFU_CORE_BOX[3])
-            #     center_y = random.uniform(y_lower_bound, y_upper_bound)
-            #     center = np.array([center_x, center_y, ref_lwh[2]/2] + ref_lwh + [0])
-            #     # 确保生成的3d坐标不在动态目标上
-            #     overlap, bev_mask, new_box_mask = check_new_box_in_bev_mask(center, bev_mask)
-            #     cycle_flag = (not overlap)  # overlap=True: 不相交（停止循环）  overlap=False: 相交（接着循环）
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_box_mask_all.png", new_box_mask*255)
-            # total_mask = bev_mask | new_box_mask
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_mask_all.png", total_mask*255)
+            center_x = BEV_RANGE[0] + coor[1] * BEV_RESOLUTION
+            center_y = BEV_RANGE[2] + coor[0] * BEV_RESOLUTION
 
             # update influence
-            # cur_box["influence"] = "avoid"
             center = np.array([center_x, center_y, ref_lwh[2]/2])
             cur_box["influence"] = get_label(center)
             coor_3d_list.append(center)
@@ -753,7 +762,14 @@ if __name__ == '__main__':
             yaw = np.zeros(3)  # xyz euler
             yaw[2] = 0
             x1, y1, x2, y2 = get_3d_vertex(center, ref_lwh, yaw, trans_rfu2cam, K)
+            # 如果所占的pixel < 100，认为不合理
+            pixel_num = (x2 - x1) * (y2 - y1)
+            if pixel_num < 100:
+                continue
             cur_box["3d_box"] = center.tolist() + ref_lwh + [yaw[2]]  # xyz lwh yaw
+
+            # 每贴一个目标就要更新bev mask的遮挡区域
+            bev_mask = generate_bev_mask(bev_mask, [cur_box["3d_box"]])
             # TODO: 根据后续框给前面的框添加遮挡属性
             # update rect
             cur_box["rects"]["xmin"] = x1
@@ -764,7 +780,7 @@ if __name__ == '__main__':
             #! 需要check坐标的可行性
 
             # 根据3d坐标生成scene mask
-            scene_mask = np.zeros((IMG_H, IMG_W, 3), np.uint8)
+            scene_mask = np.zeros((IMG_H * scale, IMG_W * scale, 3), np.uint8)
             scene_mask[y1:y2, x1:x2, :] = 255
             cur_box["mask"] = (scene_mask[:, :, 0] / 255).astype(int)
 
@@ -783,26 +799,16 @@ if __name__ == '__main__':
             ref_mask = mask
 
             # background image
-            # back_image = cv2.cvtColor(scene_img, cv2.COLOR_BGR2RGB)
             back_image = scene_img
 
             # background mask 
             tar_mask = scene_mask[:,:,0] > 128
+            if tar_mask.sum() < 100:
+                continue
             tar_mask = tar_mask.astype(np.uint8)
             
+            # diffusion model
             gen_image = inference_single_image(ref_image, ref_mask, back_image.copy(), tar_mask)
-            # cv2.imwrite(f"test/test_{i}_gen.png", gen_image[:, :, ::-1])
-
-            # save img to check 
-            h,w = back_image.shape[0], back_image.shape[0]
-            ref_image = cv2.resize(ref_image, (w,h))
-            back_display = copy.deepcopy(back_image)
-            cv2.rectangle(back_display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
-            label = cur_box["influence"]
-            cv2.putText(back_display, f"({center} label:{label})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
-            vis_image = cv2.hconcat([ref_image, back_display, gen_image])
-            # cv2.imwrite(f"test/test_{nori_id}_{i}_all.png", vis_image[:,:,::-1])
-            cv2.imwrite(refile.smart_path_join(local_dir, f"{nori_id}_{i}_all.png"), vis_image[:,:,::-1])
 
             # fill label info 
             new_scene_data[nori_id]["labels"]["boxes"].append(cur_box)
@@ -813,12 +819,33 @@ if __name__ == '__main__':
         
         for box in new_scene_data[nori_id]["labels"]["boxes"]:
             box.pop("mask")
-                            
-        save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
-        with refile.smart_open(save_path, 'wb') as file:
-            file.write(jpeg.encode(gen_image[:,:,::-1]))
 
+        # 结果存入s3                    
+        save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
+        save_img = cv2.resize(gen_image, (IMG_W * 2, IMG_H * 2))
+        with refile.smart_open(save_path, 'wb') as file:
+            file.write(jpeg.encode(save_img[:,:,::-1]))
         
+        if args.save_local:
+            display = gen_image.copy()
+            for cur_box in new_scene_data[nori_id]["labels"]["boxes"]:
+                x1 = cur_box["rects"]["xmin"]
+                y1 = cur_box["rects"]["ymin"]
+                x2 = cur_box["rects"]["xmax"]
+                y2 = cur_box["rects"]["ymax"]
+                cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
+                center = cur_box["3d_box"][:2]
+                label = cur_box["class"]
+                influence = cur_box["influence"]
+                occ = cur_box["occluded"].split("-")[-1]
+                cv2.putText(display, f"({center}-{label}-{influence}-{occ})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
+            display = cv2.resize(display, (IMG_W * 2, IMG_H * 2))
+            save_path = refile.smart_path_join(local_dir, f"{nori_id}.png")
+            logger.info(f"save as {save_path}")
+            cv2.imwrite(save_path, display[:, :, ::-1])
+            cv2.imwrite(save_path.replace(".png", "_mask.png"), bev_mask * 255)
+
+
         # 4. fill label info for generated 
         # new_scene_data[nori_id]["labels"]['boxes_label_info']["skipped"] = False
         new_scene_data[nori_id]["img_path"] = save_path
