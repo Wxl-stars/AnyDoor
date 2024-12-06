@@ -627,8 +627,8 @@ if __name__ == '__main__':
     json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
 
     scene_data_list = load_data(args.scene_json)
-    scene_data_list = scene_data_list[:10]
     logger.info(f"Total {len(scene_data_list)} datas.")
+    scene_data_list = scene_data_list[:2000]
     ref_data = json.load(refile.smart_open(args.ref_json))
     local_dir = f"test/{TODAY}_template"
     if not os.path.exists(local_dir):
