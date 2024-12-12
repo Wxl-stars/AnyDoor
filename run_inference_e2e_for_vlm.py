@@ -714,13 +714,14 @@ if __name__ == '__main__':
         K[:2] = K[:2] * scale
         # bev_mask = np.array(scene_data["bev_mask"])  # ! load 提前计算好的bev mask
         bboxes = scene_data['bboxes']
+        # 生成动态障碍物的bev_mask
         bev_mask = np.ones((height, width), dtype=np.uint8)
         # mask掉例自车较近的一块区域
         y_lower_bound = RFU_CORE_BOX[2]
         end_y =  int((y_lower_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
         bev_mask[0:end_y,  :] = 0
         # 根据动态目标的3d框生成mask
-        bev_mask= generate_bev_mask(bev_mask, bboxes, BEV_RANGE, BEV_RESOLUTION, ratio=1.5)
+        bev_mask= generate_bev_mask(bev_mask, bboxes, BEV_RANGE, BEV_RESOLUTION, ratio=1.1)
         empty_ratio = bev_mask.mean()
 
         # randm pick obj
@@ -772,6 +773,9 @@ if __name__ == '__main__':
             bev_mask = generate_bev_mask(bev_mask, [cur_box["3d_box"]])
             # TODO: 根据后续框给前面的框添加遮挡属性
             # update rect
+            if ref_obj_class == "collision_bar":
+                #TODO: 防撞柱要不要扩一下框
+                pass
             cur_box["rects"]["xmin"] = x1
             cur_box["rects"]["ymin"] = y1
             cur_box["rects"]["xmax"] = x2
@@ -820,13 +824,18 @@ if __name__ == '__main__':
         for box in new_scene_data[nori_id]["labels"]["boxes"]:
             box.pop("mask")
 
-        # 结果存入s3                    
-        save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
-        save_img = cv2.resize(gen_image, (IMG_W * 2, IMG_H * 2))
-        with refile.smart_open(save_path, 'wb') as file:
-            file.write(jpeg.encode(save_img[:,:,::-1]))
+        # 结果存入s3
+        try:           
+            save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
+            save_img = cv2.resize(gen_image, (IMG_W * 2, IMG_H * 2))
+            with refile.smart_open(save_path, 'wb') as file:
+                file.write(jpeg.encode(save_img[:,:,::-1]))
+        except:
+            new_scene_data.pop(nori_id)
+            continue
         
-        if args.save_local:
+        if args.save_local and random.choice([True, False, False, False, False]):
+        # if args.save_local:
             display = gen_image.copy()
             for cur_box in new_scene_data[nori_id]["labels"]["boxes"]:
                 x1 = cur_box["rects"]["xmin"]
@@ -835,6 +844,7 @@ if __name__ == '__main__':
                 y2 = cur_box["rects"]["ymax"]
                 cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
                 center = cur_box["3d_box"][:2]
+                center = [round(x, 2) for x in center]
                 label = cur_box["class"]
                 influence = cur_box["influence"]
                 occ = cur_box["occluded"].split("-")[-1]
