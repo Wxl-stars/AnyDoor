@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 from datasets.private_data.controlnet_sd_private_dataset import ControlPrivate, PromptGenerator
 from datasets.private_data.private.private_multimodal import PrivateMultiModalData
@@ -21,16 +22,40 @@ class ControlPrivateStatic(ControlPrivate):
             ])
 
 
-    def draw_bboxes(self, target, bboxes, labels):
+    def draw_bboxes(self, target, bboxes, labels, json_path):
         img = np.zeros((target.shape[0], target.shape[1], 3))
         img = img.copy().astype(np.uint8)
         if labels is None or len(labels) == 0:
             return img
 
         for i in range(len(bboxes)):
+            label = labels[i]
+            label_name = self.class_names[label]
             xmin, ymin, xmax, ymax = bboxes[i]
-            img[int(ymin) : int(ymax), int(xmin) : int(xmax),...] = self.colors[labels[i]+1]
 
+            img[int(ymin) : int(ymax), int(xmin) : int(xmax),...] = self.colors[labels[i]+1]
+            # cal area of 2d box
+            lenth = ymax - ymin
+            width = xmax - xmin
+            area = (xmax - xmin) * (ymax - ymin)
+            img_name = json_path.replace("/", "-")
+            if lenth > 180 or width > 180:
+                _x = (xmin + xmax) / 2.0
+                _y = (ymin + ymax) / 2.0
+                x = int(_x)
+                y = int(_y)
+                target_mask = np.zeros_like(target)
+                target_mask[int(ymin) : int(ymax), int(xmin) : int(xmax),...] = 1
+                thres = int(max(lenth, width) / 2.0)
+                target_mask = target_mask[y-thres:y+thres, x-thres:x+thres, :]
+                crop_img = target[y-thres:y+thres, x-thres:x+thres, :]
+                import IPython; IPython.embed()
+                # crop_img = target[int(ymin) : int(ymax), int(xmin) : int(xmax),...]
+                crop_img *= target_mask
+                try:
+                    cv2.imwrite(f"./crop_obj_new/{img_name}_{label_name}_{int(area)}.png", crop_img)
+                except:
+                    pass
         return img 
 
     def _prepare_one_frame(self, item):
@@ -39,7 +64,6 @@ class ControlPrivateStatic(ControlPrivate):
             target = item['imgs']
             source = np.zeros_like(target)
             return target, source
-        
         source_img = item['imgs'] #torch.Size([6, 3, 256, 704])
         img_list = []
         static_list = []
@@ -55,7 +79,7 @@ class ControlPrivateStatic(ControlPrivate):
             bboxes2d = source_bbox[view_id]
             labels2d = source_label[view_id]
 
-            static = self.draw_bboxes(img, bboxes2d, labels2d)
+            static = self.draw_bboxes(img, bboxes2d, labels2d, item["json_path"])
             img_list.append(img)
             static_list.append(static)
 

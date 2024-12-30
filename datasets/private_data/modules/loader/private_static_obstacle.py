@@ -9,6 +9,29 @@ from datasets.private_data.utils.functional import is_master
 from .private_base import LoaderBase
 import refile
 
+hf9_lidar2ego = {
+    "transform": {
+        "translation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -0.33000001311302185
+        },
+        "rotation": {
+            "w": -0.7071067811865474,
+            "x": -0.0,
+            "y": -0.0,
+            "z": 0.7071067811865477
+        }
+    },
+    "euler_degree": {
+        "RotX": -0.0,
+        "RotY": 0.0,
+        "RotZ": -90.0
+    },
+    "calib_status": 0,
+    "information": "ego_tf_rfu",
+    "calib_time": "2024-10-25 03:16:02"
+}
 
 class LoaderStaticObstacle(LoaderBase):
     def islabeled(self, frame):
@@ -44,7 +67,8 @@ class LoaderStaticObstacle(LoaderBase):
                 ]
 
             calibrated_sensors[json_idx] = {
-                "cam_front_120": json_data["frames"][0]["cam_calib"]
+                "cam_front_120": json_data["frames"][0]["cam_calib"],
+                "lidar2ego": hf9_lidar2ego,
             }
             
             if len(idx) == 0:

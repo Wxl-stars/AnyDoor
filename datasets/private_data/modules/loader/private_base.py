@@ -138,5 +138,5 @@ class LoaderBase:
     def get_scene_name(self, idx):
         # 定位当前idx数据存在于哪个json文件，json文件地址作为 scene_name。
         json_idx = bisect.bisect_right(self.output["frame_data_list"].cumulative_sizes, idx)
-        json_path = self.output["json_collection"][json_idx][1]
+        json_path = self.output["json_collection"][json_idx]
         return json_path

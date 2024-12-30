@@ -606,6 +606,7 @@ class ControlPrivate(PrivateMultiModalData):
         # preocess image
         data_dict = self.pipeline(data_dict)
         data_dict["tags"] = self.loader_output["frame_data_list"][index]["tags"]
+        data_dict["json_path"] = self.loader.get_scene_name(index)
         return data_dict
 
     def __getitem__(self, idx):
