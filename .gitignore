@@ -5,7 +5,9 @@ lightning_logs/
 image_log/
 
 # vis
+*_test/
 test*.png
+*.png
 
 #*.pth
 *.pt
