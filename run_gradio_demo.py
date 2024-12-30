@@ -220,7 +220,7 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio = 0.8, ena
     return item
 
 
-ref_dir='./hf_test/FG'
+ref_dir='./hf_test/ref'
 image_dir='./hf_test/BG'
 ref_list=[os.path.join(ref_dir,file) for file in os.listdir(ref_dir) if '.jpg' in file or '.png' in file or '.jpeg' in file ]
 ref_list.sort()
@@ -260,16 +260,16 @@ def run_local(base,
     if mask.sum() == 0:
         raise gr.Error('No mask for the background image.')
 
-    if reference_mask_refine:
-        ref_mask = process_image_mask(ref_image, ref_mask)
-        cv2.imwrite(f"./hf_test/test_{timestamp}_refine_mask.png", ref_mask*255)
+    # if reference_mask_refine:
+    ref_mask = process_image_mask(ref_image, ref_mask)
+    cv2.imwrite(f"./hf_test/test_{timestamp}_refine_mask.png", ref_mask*255)
 
     ref_image_mask = ref_image * (np.stack([ref_mask, ref_mask, ref_mask], -1))
     cv2.imwrite(f"./hf_test/test_{timestamp}_image_mask.png", ref_image_mask[:, :, ::-1])
 
-    synthesis = inference_single_image(ref_image.copy(), ref_mask.copy(), image.copy(), mask.copy(), *args)
-    synthesis = torch.from_numpy(synthesis).permute(2, 0, 1)
-    synthesis = synthesis.permute(1, 2, 0).numpy()
+    synthesis = inference_single_image(ref_image.copy(), ref_mask.copy(), image.copy(), mask.copy(), *args)  # hwc
+    synthesis = torch.from_numpy(synthesis).permute(2, 0, 1)  # chw
+    synthesis = synthesis.permute(1, 2, 0).numpy()  # hwc
 
     cv2.imwrite(f"./hf_test/{timestamp}.png", synthesis[:, :, ::-1])
     cv2.imwrite(f"./hf_test/{timestamp}_mask.png", mask * 255)
@@ -309,7 +309,8 @@ with gr.Blocks() as demo:
 
         with gr.Row():
             base = gr.Image(label="Background", source="upload", tool="sketch", type="pil", height=512, brush_color='#FFFFFF', mask_opacity=0.5)
-            ref = gr.Image(label="Reference", source="upload", tool="sketch", type="pil", height=512, brush_color='#FFFFFF', mask_opacity=0.5)
+        
+        ref = gr.Image(label="Reference", source="upload", tool="sketch", type="pil", height=600, brush_color='#FFFFFF', mask_opacity=0.5)
         run_local_button = gr.Button(label="Generate", value="Run")
 
         # with gr.Row():
