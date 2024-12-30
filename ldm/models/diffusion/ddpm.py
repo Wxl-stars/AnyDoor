@@ -613,6 +613,9 @@ class LatentDiffusion(DDPM):
             self.make_cond_schedule()
 
     def instantiate_first_stage(self, config):
+        """
+            AutoencoderKL
+        """
         model = instantiate_from_config(config)
         self.first_stage_model = model.eval()
         self.first_stage_model.train = disabled_train
@@ -620,6 +623,9 @@ class LatentDiffusion(DDPM):
             param.requires_grad = False
 
     def instantiate_cond_stage(self, config):
+        """
+            FrozenDinoV2Encoder
+        """
         if not self.cond_stage_trainable:
             if config == "__is_first_stage__":
                 print("Using first stage also as cond stage.")
@@ -633,7 +639,7 @@ class LatentDiffusion(DDPM):
                 self.cond_stage_model = model.eval()
                 self.cond_stage_model.train = disabled_train
                 for param in self.cond_stage_model.parameters():
-                    param.requires_grad = False
+                    param.requires_grad = False  #! 这里是不是有问题？这里设为False后，projector的required_grad就变成False了
         else:
             assert config != '__is_first_stage__'
             assert config != '__is_unconditional__'

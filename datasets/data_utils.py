@@ -93,8 +93,8 @@ def resize_box(yyxx, H,W,h,w):
 def get_bbox_from_mask(mask):
     h,w = mask.shape[0],mask.shape[1]
 
-    if mask.sum() < 10:
-        return 0,h,0,w
+    # if mask.sum() < 10:
+    #     return 0,h,0,w
     rows = np.any(mask,axis=1)
     cols = np.any(mask,axis=0)
     y1,y2 = np.where(rows)[0][[0,-1]]
