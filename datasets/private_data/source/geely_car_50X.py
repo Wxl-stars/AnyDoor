@@ -5,7 +5,13 @@ TRAINSET = {}
 # ----- 训练数据子集，人工设计规则 -----
 TRAINSET_PARTIAL = {
     "Static": "s3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/json_collection/E171_Static.json", # frame 698396
-    "debug": ["s3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0007.json"],
+    "debug": [
+        's3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0004.json',
+        's3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0005.json',
+        's3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0006.json',
+        # 's3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0007.json',
+        's3://sdagent-shard-bj-baiducloud/wheeljack/ariadne/datasets/static_obj/hardcase/zhichengzhu/labels_20240926/labeled/0008.json',
+        ],
 }
 
 
