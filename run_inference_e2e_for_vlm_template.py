@@ -61,11 +61,11 @@ model.load_state_dict(load_state_dict(model_ckpt, location='cuda'))
 model = model.cuda()
 ddim_sampler = DDIMSampler(model)
 
-RFU_CORE_BOX = [-2, 2, 10, 50]  # 左右后前
+RFU_CORE_BOX = [-8, 8, 10, 50]  # 左右后前
 # MASK_X = 0.6
 CYCLE_NUMS = 3
 HALF_LANE = 1.875
-BEV_RANGE = [-2, 2, 0, 50]
+BEV_RANGE = [-8, 8, 0, 50]
 BEV_RESOLUTION = 0.02
 EGO_px = int((0 - BEV_RANGE[0]) / BEV_RESOLUTION)
 EGO_py = int((0 - BEV_RANGE[2]) / BEV_RESOLUTION)
@@ -650,12 +650,14 @@ if __name__ == '__main__':
         json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_template{args.rank_id}.json")
 
     
-    img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs")
+    img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs_800w")
+    examples_dir = refile.smart_path_join(PREFIX, TODAY, "examples")
     json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
 
     scene_data_list = load_data(args.scene_json)
+    random.shuffle(scene_data_list)
     logger.info(f"Total {len(scene_data_list)} datas.")
-    scene_data_list = scene_data_list[:10]
+    scene_data_list = scene_data_list[:2000]
     ref_data = json.load(refile.smart_open(args.ref_json))
 
     new_scene_data = dict()
@@ -719,47 +721,80 @@ if __name__ == '__main__':
         bev_mask= generate_bev_mask(bev_mask, bboxes, BEV_RANGE, BEV_RESOLUTION, ratio=1.1)
         empty_ratio = bev_mask.mean()
 
-        ref_obj_class = random.choice(["cone", "collision_bar", "anti_collision_barrel"])
-        ref_path = random.choice(ref_data[ref_obj_class]["ref_path"])
+        # ref_obj_class = random.choice(["cone", "collision_bar", "anti_collision_barrel"])
+        ref_obj_class = random.choice(ref_obj_classes)
+        ref_obj = random.choice(ref_data[ref_obj_class])
+        ref_path = ref_obj["ref_path"]
         ref_img = refile.smart_load_image(ref_path)  # BGR
         ref_img = cv2.cvtColor(ref_img.copy(), cv2.COLOR_BGR2RGB)
-        ref_lwh = ref_data[ref_obj_class]["lwh"]
-        # 竖排：需要col，delta，起始y [由间隔算数量]
-        y_lower_bound = int((7 - BEV_RANGE[2]) / BEV_RESOLUTION)
-        y_upper_bound = int((10 - BEV_RANGE[2]) / BEV_RESOLUTION)
-        bev_mask[:y_lower_bound, :] = 0
+        ref_lwh = ref_obj["lwh"]
+
+        template_flag = random.choice(["keep_same_x", "keep_same_y"])
+        template_flag = "keep_same_y"
 
         # 贴特殊成排成列的锥桶 TODO: 需要改一下，
         #! 添加横排处理流程
         # col_indices = [j for j in range(bev_mask.shape[1]) if bev_mask[y_lower_bound:, j].mean() > 0.3]
-        col_indices = [j for j in range(bev_mask.shape[1]) if np.all(bev_mask[end_y:, j] == 1)]  # 竖排全为1
-        # row_indices = [i for i in range(bev_mask.shape[0]) if np.all(bev_mask[i, :] == 1)]  # 横排全为1
-        try:
-            col = random.choice(col_indices)
-        except:
-            continue
-        start_row = random.randint(y_lower_bound, y_upper_bound)   #! random2
-        y_lower_bound = int((25 - BEV_RANGE[2]) / BEV_RESOLUTION)
-        y_upper_bound = int((min(ref_data[ref_obj_class]["upper_bound_y"], 35) - BEV_RANGE[2]) / BEV_RESOLUTION)
-        end_row = random.randint(y_lower_bound, y_upper_bound)  #! random3
-        # 确定间隔
-        y = BEV_RANGE[0] + col * BEV_RESOLUTION
-        # TODO: 是否需要这个逻辑？这个逻辑 or mask一部分的x？
-        if np.abs(y) < 0.3:
-            delta = random.uniform(1, 5)  #! random1
-        else:
-            delta = random.uniform(3, 5)
-        delta = delta * ref_data[ref_obj_class]["delta_weight_y"]
+        if template_flag == "keep_same_x":
+            # 竖排：需要col，delta，起始y [由间隔算数量]
+            col_indices = [j for j in range(bev_mask.shape[1]) if np.all(bev_mask[end_y:, j] == 1)]  # 竖排全为1
+            try:
+                col = random.choice(col_indices)
+            except:
+                continue
+
+            # 确定间隔
+            y = BEV_RANGE[0] + col * BEV_RESOLUTION
+            # TODO: 是否需要这个逻辑？这个逻辑 or mask一部分的x？
+            if np.abs(y) < 0.3:
+                delta = random.uniform(1, 5)  #! random1
+            else:
+                delta = random.uniform(3, 5)
+            delta = delta * ref_data[ref_obj_class]["delta_weight_y"]
+            # 确定起始行和终止行
+            y_lower_bound = int((7 - BEV_RANGE[2]) / BEV_RESOLUTION)
+            y_upper_bound = int((10 - BEV_RANGE[2]) / BEV_RESOLUTION)
+            start = random.randint(y_lower_bound, y_upper_bound)   #! random2
+            y_lower_bound = int((25 - BEV_RANGE[2]) / BEV_RESOLUTION)
+            y_upper_bound = int((min(ref_data[ref_obj_class]["upper_bound_y"], 35) - BEV_RANGE[2]) / BEV_RESOLUTION)
+            end = random.randint(y_lower_bound, y_upper_bound)  #! random3
+
+        elif template_flag == "keep_same_y":
+            # 生成横排
+            row_indices = [i for i in range(bev_mask.shape[0]) if np.all(bev_mask[i, :] == 1)]  # 横排全为1
+            try:
+                row = random.choice(row_indices)
+            except:
+                continue
+            # 确定起始行和终止列
+            x_lower_bound = int(((HALF_LANE * -2) - BEV_RANGE[0]) / BEV_RESOLUTION)
+            x_upper_bound = int(((HALF_LANE * -1.5) - BEV_RANGE[0]) / BEV_RESOLUTION)
+            start = random.randint(x_lower_bound, x_upper_bound)   #! random2
+            x_lower_bound = int(((HALF_LANE * 1.5) - BEV_RANGE[0]) / BEV_RESOLUTION)
+            x_upper_bound = int(((HALF_LANE * 2) - BEV_RANGE[0]) / BEV_RESOLUTION)
+            end = random.randint(x_lower_bound, x_upper_bound)
+            delta = random.uniform(1, 3)
+            delta += ref_lwh[0]
+            
+        # 间隔转到bev坐标系
         bev_delta = int(delta / BEV_RESOLUTION)
         i = 0
-        for row in range(end_row, start_row, -bev_delta):
+        for pick in range(end, start, -bev_delta):
             i += 1
             if gen_image is not None:
                 scene_img = copy.deepcopy(gen_image)
 
-            coors = np.array(
-                [BEV_RANGE[0] + col * BEV_RESOLUTION, BEV_RANGE[2] + row * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
-            )
+            if template_flag == "keep_same_x":
+                row = pick
+                coors = np.array(
+                    [BEV_RANGE[0] + col * BEV_RESOLUTION, BEV_RANGE[2] + row * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
+                )
+            elif template_flag == "keep_same_y":
+                col = pick
+                coors = np.array(
+                    [BEV_RANGE[0] + col * BEV_RESOLUTION, BEV_RANGE[2] + row * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
+                )
+
             cur_box = copy.deepcopy(BOX_TEMP)
             cur_box["class"] = ref_obj_class
             center_x, center_y = coors
@@ -767,6 +802,8 @@ if __name__ == '__main__':
             # update influence
             center = np.array([center_x, center_y, ref_lwh[2]/2])
             cur_box["influence"] = get_label(center)
+            if template_flag == "keep_same_y":
+                cur_box["influence"] = "stop"
             # coor_3d_list.append(center)
             # 默认朝向
             yaw = np.zeros(3)  # xyz euler
@@ -829,12 +866,16 @@ if __name__ == '__main__':
             box.pop("mask")
                             
         # 结果存入s3 
-        save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
-        save_img = cv2.resize(gen_image, (IMG_W * 2, IMG_H * 2))
-        with refile.smart_open(save_path, 'wb') as file:
-            file.write(jpeg.encode(save_img[:,:,::-1]))
+        try:
+            save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
+            save_img = cv2.resize(gen_image, (IMG_W * 2, IMG_H * 2))
+            with refile.smart_open(save_path, 'wb') as file:
+                file.write(jpeg.encode(save_img[:,:,::-1]))
+        except:
+            new_scene_data.pop(nori_id)
 
         if args.save_local and random.choice([True, False, False, False, False]):
+        # if args.save_local:
             display = gen_image.copy()
             for cur_box in new_scene_data[nori_id]["labels"]["boxes"]:
                 x1 = cur_box["rects"]["xmin"]
@@ -853,6 +894,9 @@ if __name__ == '__main__':
             logger.info(f"save as {save_path}")
             cv2.imwrite(save_path, display[:, :, ::-1])
             cv2.imwrite(save_path.replace(".png", "_mask.png"), bev_mask * 255)
+            save_path = refile.smart_path_join(examples_dir, f"{nori_id}_fake.png")
+            with refile.smart_open(save_path, 'wb') as file:
+                file.write(jpeg.encode(display[:,:,::-1]))
 
         
         # 4. fill label info for generated 

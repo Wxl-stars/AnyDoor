@@ -62,15 +62,15 @@ model = model.cuda()
 ddim_sampler = DDIMSampler(model)
 
 # for e171 static
-RFU_CORE_BOX = [-6, 6, 10, 100]  # 左右后前，核心区域，目前就y_min有用到
-CYCLE_NUMS = 20  # 一张图内，贴的数量上限
-HALF_LANE = 1.875
-BEV_RANGE = [-6, 6, 0, 100]
-# for vlm
-# RFU_CORE_BOX = [-2, 2, 10, 50]   # 左右后前，核心区域，目前就y_min有用到
-# CYCLE_NUMS = 10  # 一张图内，贴的数量上限
+# RFU_CORE_BOX = [-6, 6, 10, 100]  # 左右后前，核心区域，目前就y_min有用到
+# CYCLE_NUMS = 20  # 一张图内，贴的数量上限
 # HALF_LANE = 1.875
-# BEV_RANGE = [-2, 2, 0, 50]
+# BEV_RANGE = [-6, 6, 0, 100]
+# for vlm
+RFU_CORE_BOX = [-2, 2, 10, 50]   # 左右后前，核心区域，目前就y_min有用到
+CYCLE_NUMS = 10  # 一张图内，贴的数量上限
+HALF_LANE = 1.875
+BEV_RANGE = [-2, 2, 0, 50]
 
 BEV_RESOLUTION = 0.02
 EGO_px = int((0 - BEV_RANGE[0]) / BEV_RESOLUTION)
@@ -664,12 +664,13 @@ if __name__ == '__main__':
         json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
 
     img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs_800w")
+    examples_dir = refile.smart_path_join(PREFIX, TODAY, "examples")
     json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
     
 
     scene_data_list = load_data(args.scene_json)
     logger.info(f"Total {len(scene_data_list)} datas.")
-    scene_data_list = scene_data_list[:2000]
+    scene_data_list = scene_data_list[:4000]
     ref_data = json.load(refile.smart_open(args.ref_json))    
 
     new_scene_data = dict()
@@ -740,8 +741,9 @@ if __name__ == '__main__':
                 ref_obj_class = "water_horse"
             else:
                 ref_obj_class = random.choice(ref_obj_classes)
-            ref_path = random.choice(ref_data[ref_obj_class]["ref_path"])
-            ref_lwh = ref_data[ref_obj_class]["lwh"]
+            ref_obj = random.choice(ref_data[ref_obj_class])
+            ref_path = ref_obj["ref_path"]
+            ref_lwh = ref_obj["lwh"]
             ref_img = refile.smart_load_image(ref_path)  # BGR
             # update class
             cur_box["class"] = ref_obj_class
@@ -850,10 +852,13 @@ if __name__ == '__main__':
                 occ = cur_box["occluded"].split("-")[-1]
                 cv2.putText(display, f"({center}-{label}-{influence}-{occ})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
             display = cv2.resize(display, (IMG_W * 2, IMG_H * 2))
-            save_path = refile.smart_path_join(local_dir, f"{nori_id}.png")
-            logger.info(f"save as {save_path}")
-            cv2.imwrite(save_path, display[:, :, ::-1])
-            cv2.imwrite(save_path.replace(".png", "_mask.png"), bev_mask * 255)
+            local_save_path = refile.smart_path_join(local_dir, f"{nori_id}.png")
+            logger.info(f"save as {local_save_path}")
+            cv2.imwrite(local_save_path, display[:, :, ::-1])
+            cv2.imwrite(local_save_path.replace(".png", "_mask.png"), bev_mask * 255)
+            save_path = refile.smart_path_join(examples_dir, f"{nori_id}_fake.png")
+            with refile.smart_open(save_path, 'wb') as file:
+                file.write(jpeg.encode(display[:,:,::-1]))
 
 
         # 4. fill label info for generated 
