@@ -2,6 +2,7 @@ import copy
 import os
 import cv2
 import einops
+from loguru import logger
 import numpy as np
 import torch
 import random
@@ -26,11 +27,23 @@ from datetime import date
 from turbojpeg import TurboJPEG
 
 """
---scene_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/vlm_empty_scene.json
+bash scripts/inference_e2e_for_vlm.sh 2 s3://sdagent-shard-bj-baiducloud/wuxiaolei/static/bev_range_-2_2_0_50/2024-11-27.json
+
+
+for e2e
+--scene_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/e2e_for_vlm_-2_2_0_50.json
 # --ref_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_obj_info.json
---ref_json /gpfs/public-shared/fileset-groups/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json
+--ref_json /gpfs/shared_files/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json
 --save_path s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/vlm_empty_scene_fill.json
 """
+
+"""
+for e171_static
+--scene_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/static/bev_range_-2_2_0_50/2024-11-27.json
+# --ref_json s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_obj_info.json
+--ref_json /gpfs/shared_files/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json
+"""
+
 
 
 save_memory = False
@@ -48,13 +61,19 @@ model.load_state_dict(load_state_dict(model_ckpt, location='cuda'))
 model = model.cuda()
 ddim_sampler = DDIMSampler(model)
 
-RFU_CORE_BOX = [-2, 2, 10, 50]  # 左右后前
+RFU_CORE_BOX = [-30, 30, 10, 50]  # 左右后前
 CYCLE_NUMS = 3
 HALF_LANE = 1.875
+BEV_RANGE = [-2, 2, 0, 50]
+BEV_RESOLUTION = 0.02
+EGO_px = int((0 - BEV_RANGE[0]) / BEV_RESOLUTION)
+EGO_py = int((0 - BEV_RANGE[2]) / BEV_RESOLUTION)
+BEV_width = int((BEV_RANGE[1] - BEV_RANGE[0]) / BEV_RESOLUTION)
+BEV_height = int((BEV_RANGE[3] - BEV_RANGE[2]) / BEV_RESOLUTION)
 # Y_THREH_MIN = 30
 IMG_H = 1080
 IMG_W = 1920
-PREFIX = "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/anydoor_generated/"
+PREFIX = "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/anydoor_generated/random/"
 TODAY = str(date.today())
 BOX_TEMP = {
     'track_index': 1,
@@ -70,69 +89,6 @@ BOX_TEMP = {
         'ymax': 1184.5228271484375
         }
   }
-
-cam_front_120_intrinsic = {
-    "resolution": [
-        3840,
-        2160
-    ],
-    "distortion_model": "fisheye",
-    "K": [
-        [
-            2431.34822198258,
-            0.0,
-            1915.6344415190715
-        ],
-        [
-            0.0,
-            2435.8935271608184,
-            1057.1992218239238
-        ],
-        [
-            0.0,
-            0.0,
-            1.0
-        ]
-    ],
-    "D": [
-        [
-            -0.33283291909412016
-        ],
-        [
-            0.18082653911290322
-        ],
-        [
-            -0.09923141674697789
-        ],
-        [
-            0.024348077124114128
-        ]
-    ]
-}
- 
-cam_front_120_extrinsic = {
-    "transform": {
-        "translation": {
-            "x": 0.027138140679381053,
-            "y": 1.64892744897775,
-            "z": -1.664214771961789
-        },
-        "rotation": {
-            "w": -0.7041052687496392,
-            "x": -0.7100094615014261,
-            "y": 0.010018740197583975,
-            "z": -0.0046861436498590045
-        }
-    },
-    "euler_degree": {
-        "RotX": 90.48288573101871,
-        "RotY": -0.42709141644429616,
-        "RotZ": 1.1933543231435044
-    },
-    "calib_status": 0,
-    "information": "cam_front_120_tf_rfu",
-    "calib_time": "2024-10-25 03:16:02"
-}
 
 
 def get_trans_rfu2cam(cam_front_120_extrinsic):
@@ -385,7 +341,7 @@ def get_date_from_json(json_path):
     datetime_part = match.group(1) if match else None
     return datetime_part.split("_")[-1]
 
-def get_label(coor_3d):
+def get_label_(coor_3d):
     label = None
     _x = min(abs(coor_3d[0] - 0.8), abs(coor_3d[0] + 0.8))  # 与自车轮廓的横向最近距离
     if abs(coor_3d[0]) > HALF_LANE:  # 目标不在自车车道
@@ -398,43 +354,292 @@ def get_label(coor_3d):
         label = "stop"
     return label
 
+def get_label(coor_3d):
+    label = None
+    if coor_3d[0] > 1:
+        label = "keep"
+    else:
+        label = "avoid"
+    return label
+
+
+def compute_boundary_intersection(origin, point, x_bounds, z_bounds):
+    """
+    计算从原点到目标点的延长线与地图边界的交点。
+    :param origin: 原点坐标 (x0, z0)
+    :param point: 目标点坐标 (x1, z1)
+    :param x_bounds: X轴边界 [x_min, x_max]
+    :param z_bounds: Z轴边界 [z_min, z_max]
+    :return: 与地图边界的交点 (x', z')
+    """
+    x0, z0 = origin
+    x1, z1 = point
+
+    xmin, xmax, ymin, ymax = BEV_RANGE
+    width = int((xmax - xmin) / BEV_RESOLUTION)
+    height = int((ymax - ymin) / BEV_RESOLUTION)
+    x_min = 0
+    x_max = width
+    z_min = 0
+    z_max = height
+    # x_min, x_max = x_bounds
+    # z_min, z_max = z_bounds
+
+    # 计算方向向量
+    dx, dz = x1 - x0, z1 - z0
+    intersections = []
+
+    # 遍历边界 (x = x_min, x = x_max, z = z_min, z = z_max)
+    if dx != 0:  # 避免除以零
+        t_x_min = (x_min - x0) / dx
+        t_x_max = (x_max - x0) / dx
+        intersections.append((x_min, z0 + t_x_min * dz))  # 与左边界
+        intersections.append((x_max, z0 + t_x_max * dz))  # 与右边界
+    if dz != 0:  # 避免除以零
+        t_z_min = (z_min - z0) / dz
+        t_z_max = (z_max - z0) / dz
+        intersections.append((x0 + t_z_min * dx, z_min))  # 与上边界
+        intersections.append((x0 + t_z_max * dx, z_max))  # 与下边界
+
+    # 筛选边界内的交点
+    valid_points = [
+        (int(x), int(z)) for x, z in intersections
+        if x_min <= x <= x_max and z_min <= z <= z_max
+    ]
+
+    # 按照与原点的距离进行排序
+    valid_points.sort(key=lambda v: v[0]**2 + v[1]**2, reverse=True)
+
+    # 返回最近的交点
+    if valid_points:
+        return valid_points[0]  # 选择第一个有效点
+    else:
+        return None
+    
+def wether_add_bordar(corners):
+    xmin, xmax, ymin, ymax = BEV_RANGE
+    width = int((xmax - xmin) / BEV_RESOLUTION)
+    height = int((ymax - ymin) / BEV_RESOLUTION)
+    intersection = corners[:, 0]
+    if (0 in intersection) and (width in intersection):
+        corners = np.concatenate((corners, np.array([[0, height], [width, height]])))
+    elif 0 in intersection:
+        corners = np.concatenate((corners, np.array([[0, height]])))
+    elif width in intersection:
+        corners = np.concatenate((corners, np.array([[width, height]])))
+    return corners
+    
+
+
+def generate_bev_mask(bboxes, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION):
+    """
+    Generate BEV mask from 3D bounding boxes.
+
+    Args:
+        bboxes (list): List of bounding boxes [(x, y, z, width, length, height, yaw), ...].
+        bev_range (tuple): BEV range (xmin, xmax, ymin, ymax).
+        resolution (float): Resolution in meters/pixel.
+
+    Returns:
+        np.ndarray: BEV mask as a binary image.
+    """
+    # Define BEV dimensions
+    xmin, xmax, ymin, ymax = bev_range
+    width = int((xmax - xmin) / resolution)
+    height = int((ymax - ymin) / resolution)
+    bev_mask = np.ones((height, width), dtype=np.uint8)
+
+    for bbox in bboxes:
+        cur_mask = np.zeros((height, width), dtype=np.uint8)
+        x, y, _, w, l, _, yaw = bbox
+        
+        # Calculate corners in world coordinates
+        corners = np.array([
+            [w / 2, l / 2],
+            [-w / 2, l / 2],
+            [-w / 2, -l / 2],
+            [w / 2, -l / 2]
+        ])
+        rotation_matrix = np.array([
+            [np.cos(yaw), -np.sin(yaw)],
+            [np.sin(yaw), np.cos(yaw)]
+        ])
+        rotated_corners = np.dot(corners, rotation_matrix.T)
+        translated_corners = rotated_corners + np.array([x, y])
+        
+        # Map to BEV pixel coordinates
+        pixel_corners = ((translated_corners - [xmin, ymin]) / resolution).astype(np.int32)
+
+        # Fill polygon on the mask
+        cv2.fillPoly(cur_mask, [pixel_corners], 0)
+        if np.all(cur_mask == 1):
+            continue
+        bev_mask = bev_mask | cur_mask
+        # cv2.fillPoly(bev_mask, [pixel_corners], 0)
+
+        # 计算前角交叉点
+        pixel_corners = pixel_corners[pixel_corners[:, 1].argsort()]
+        origin = (EGO_px, EGO_py)
+        intersection_A = compute_boundary_intersection(origin, pixel_corners[0], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        intersection_B = compute_boundary_intersection(origin, pixel_corners[1], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        if intersection_A is not None and intersection_B is not None:
+            intersection_A = np.array(intersection_A)[None, :]
+            intersection_B = np.array(intersection_B)[None, :]
+            corners = np.concatenate((intersection_A, intersection_B, pixel_corners[:2]), axis=0)
+            intersections = corners[:2]
+            corners = corners[corners[:, 0].argsort()]
+            cv2.fillPoly(bev_mask, [corners], 0)
+            corners = wether_add_bordar(intersections)
+            cv2.fillPoly(bev_mask, [corners], 0)
+            # cv2.imwrite("test_2.png", bev_mask*255)
+
+        # 计算后角交叉点
+        intersection_A = compute_boundary_intersection(origin, pixel_corners[2], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        intersection_B = compute_boundary_intersection(origin, pixel_corners[3], RFU_CORE_BOX[:2], RFU_CORE_BOX[2:])
+        if intersection_A is not None and intersection_B is not None:
+            intersection_A = np.array(intersection_A)[None, :]
+            intersection_B = np.array(intersection_B)[None, :]
+            corners = np.concatenate((intersection_A, intersection_B, pixel_corners[2:]), axis=0)
+            intersections = corners[:2]
+            corners = corners[corners[:, 0].argsort()]
+            cv2.fillPoly(bev_mask, [corners], 0)
+            corners = wether_add_bordar(intersections)
+            cv2.fillPoly(bev_mask, [corners], 0)
+            # cv2.imwrite("test_3.png", bev_mask*255)
+
+    if np.all(bev_mask == 0):
+        return bev_mask
+
+    return bev_mask
+
+def check_new_box_in_bev_mask(new_box, bev_mask, bev_range=BEV_RANGE, resolution=BEV_RESOLUTION):
+    """
+    Check if a new 3D box's corresponding BEV mask region contains any non-zero value.
+
+    Args:
+        new_box (tuple): A single bounding box (x, y, z, width, length, height, yaw).
+        bev_mask (np.ndarray): Existing BEV mask.
+        bev_range (tuple): BEV range (xmin, xmax, ymin, ymax).
+        resolution (float): Resolution in meters/pixel.
+
+    Returns:
+        bool: True if the new box's BEV mask region is all zeros, False otherwise.
+    """
+    x, y, _, w, l, _, yaw = new_box
+    xmin, xmax, ymin, ymax = bev_range
+
+    # Calculate corners in world coordinates
+    corners = np.array([
+        [w / 2, l / 2],  # 右前角
+        [-w / 2, l / 2],  # 左前角
+        [-w / 2, -l / 2],  # 左后角
+        [w / 2, -l / 2]   # 右后角
+    ])
+    rotation_matrix = np.array([
+        [np.cos(yaw), -np.sin(yaw)],
+        [np.sin(yaw), np.cos(yaw)]
+    ])
+    rotated_corners = np.dot(corners, rotation_matrix.T)
+    translated_corners = rotated_corners + np.array([x, y])
+
+    # Map to BEV pixel coordinates
+    pixel_corners = ((translated_corners - [xmin, ymin]) / resolution).astype(np.int32)
+
+    # Create a mask for the new box
+    new_box_mask = np.zeros_like(bev_mask, dtype=np.uint8)
+    cv2.fillPoly(new_box_mask, [pixel_corners], 1)
+    # 填与ego形成的锥形区域
+    corners = np.array([EGO_px, EGO_py])
+    corners = np.concatenate((corners[None, :],pixel_corners[:2]), axis=0)
+    cv2.fillPoly(new_box_mask, [corners], 1)
+    # cv2.imwrite("bev_mask.png", bev_mask*255)
+    # cv2.imwrite("new_box_mask.png", new_box_mask*255)
+    # total_mask = np.concatenate((bev_mask, new_box_mask), axis=1)
+    # total_mask = bev_mask | new_box_mask
+
+    # Check overlap between the new box mask and the BEV mask
+    overlap = bev_mask * new_box_mask
+    return np.all(overlap == 0), bev_mask, new_box_mask  # True if all values are 0
+
+def add_occ_attr(boxes):
+    for i in range(len(boxes)):
+        cur_box = boxes[i]
+        src_mask = cur_box["mask"]
+        ratio = 0
+        for j in range(i+1, len(boxes)):
+            if i == j:
+                continue
+            tgt_mask = boxes[j]["mask"]
+            ratio = max((src_mask & tgt_mask).sum() / src_mask.sum(), ratio)
+        if ratio == 0:
+            cur_box['occluded'] = "occluded_none"
+        elif ratio < 0.3:
+            cur_box['occluded'] = "occluded_mild"
+        elif ratio >= 0.65:
+            cur_box['occluded'] = "occluded_moderate"
+        else:
+            cur_box['occluded'] = "occluded_full"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Scripts to generate data for vlm using AnyDoor"
     )
-    parser.add_argument("--rank_id", type=int, required=False, default=None)
-    parser.add_argument("--world_size", type=int, required=False, default=None)
+    parser.add_argument("--rank_id", type=int, required=False, default=0)
+    parser.add_argument("--world_size", type=int, required=False, default=1)
     parser.add_argument("--scene_json", type=str, required=True, default=None)
-    parser.add_argument("--ref_json", type=str, required=True, default=None)
+    parser.add_argument("--ref_json", type=str, required=False, default="/gpfs/shared_files/wheeljack/wuxiaolei/projs/AnyDoor/ref_obj/ref_obj_info.json")
     parser.add_argument("--save_path", type=str, required=False, default=None)
     args = parser.parse_args()
     return args
 
+def load_data(data_json):
+    json_paths = json.load(refile.smart_open(data_json))["paths"]
+    data_list = []
+    logger.info("[loading json data...]")
+    for path in json_paths:
+        json_data = json.load(refile.smart_open(path))
+        calibrated_sensors = json_data["calibrated_sensors"]
+        json_date = get_date_from_json(path)
+        for frame in json_data["frames"]:
+            data_info = dict()
+            data_info["img_path"] = frame["img_path"]
+            data_info["bev_mask"] = frame["bev_mask"]
+            data_info["bboxes"] = [box["coor"] for box in frame["bbox"]]
+            data_info["calib"] = calibrated_sensors
+            data_info["json_date"]  = json_date
+            data_info["nori_id"] = frame["nori_id"]
+            data_list.append(data_info)
+    return data_list
+
 if __name__ == '__main__': 
     # 1. Preparasion 
     args = parse_args()
+
     if args.save_path is not None:
         json_last_name = args.save_path.split("-")[-1]
         json_last_name = json_last_name.replace(".json", "_fill_fake.json")
         json_save_path = refile.smart_path_join(PREFIX, TODAY, json_last_name)
     else:
-        json_save_path = args.scene_json.replace(".json", "_fill_fake.json")
+        json_save_path = args.scene_json.replace(".json", f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
 
-    # prepare json data
-    scene_data = json.load(refile.smart_open(args.scene_json))
-    scene_data.pop("json_info")
-    ref_data = json.load(refile.smart_open(args.ref_json))
-    # prepare transformation
-    trans_rfu2cam = get_trans_rfu2cam(cam_front_120_extrinsic)
-    K = get_camera_intrinsic(cam_front_120_intrinsic)
+    img_dir = refile.smart_path_join(PREFIX, TODAY, "imgs")
+    json_save_path = refile.smart_path_join(PREFIX, TODAY, f"_{TODAY}_fill_fake_random_{args.rank_id}.json")
+    
+
+    scene_data_list = load_data(args.scene_json)
+    logger.info(f"Total {len(scene_data_list)} datas.")
+    scene_data_list = scene_data_list[-2000:]
+    ref_data = json.load(refile.smart_open(args.ref_json))    
+    local_dir = f"test/{TODAY}_random"
+    if not os.path.exists(local_dir):
+        os.mkdir(local_dir)
 
     new_scene_data = dict()
     jpeg = TurboJPEG()
 
     # 2. prepare(random create) input data
     ref_obj_classes = list(ref_data.keys())
-    scene_keys = list(scene_data.keys())
 
     # multi-process
     if args.rank_id is not None and args.world_size is not None:
@@ -445,22 +650,44 @@ if __name__ == '__main__':
         begin = 0
 
     # for nori_id in tqdm(scene_keys[:1000]):
-    for idx in tqdm(range(begin, len(scene_keys)-1, step)):
-        nori_id = scene_keys[idx]
+    for idx in tqdm(range(begin, len(scene_data_list)-1, step)):
+        scene_data = scene_data_list[idx]
+        nori_id = scene_data["nori_id"]
+        print(nori_id)
+        import IPython; IPython.embed()
         gen_image = None
-        new_scene_data[nori_id] = copy.deepcopy(scene_data[nori_id])
-        new_scene_data[nori_id]["labels"]['boxes_label_info']["skipped"] = False
-        ori_json_path = new_scene_data[nori_id]['json_path']
-        json_date = get_date_from_json(ori_json_path)
+        new_scene_data[nori_id] = dict()
+        new_scene_data[nori_id]["labels"] = {"boxes":[]}
+        new_scene_data[nori_id]["calib"] = scene_data["calib"]
+        # new_scene_data[nori_id]["labels"]['boxes_label_info']["skipped"] = False   #TODO
+        json_date = scene_data["json_date"]
+        calib_info = scene_data["calib"]
         # prepare scene img
-        scene_img_path = scene_data[nori_id]["img_path"]
+        scene_img_path = scene_data["img_path"]
         scene_img = refile.smart_load_image(scene_img_path)  # BGR
+        # cv2.imwrite("scene_img.png", scene_img)
+        # cv2.imwrite(f"test/{nori_id}_{idx}_scene_img.png", scene_img)
         scene_img = cv2.cvtColor(scene_img, cv2.COLOR_BGR2RGB)
+        # prepare transformation
+        trans_rfu2cam = get_trans_rfu2cam(calib_info["extrinsic"])
+        K = get_camera_intrinsic(calib_info["intrinsic"])
+        # bev_mask = np.array(scene_data["bev_mask"])  # ! load 提前计算好的bev mask
+        bboxes = scene_data['bboxes']
+        bev_mask= generate_bev_mask(bboxes, BEV_RANGE, BEV_RESOLUTION)
+        # cv2.imwrite("bev_mask.png", bev_mask * 255)
+        # cv2.imwrite(f"test/{nori_id}_{idx}_bev_mask.png", bev_mask * 255)
         # randm pick obj
         # ref_obj = random.randint(1, len(ref_obj_class))  #? 随机obj的个数好像不太好
         cycle_num = random.randint(1, CYCLE_NUMS)
         coor_3d_list = []
         coor_2d_list = []
+        coors = np.column_stack(np.where(bev_mask == 1))
+        coors = np.array([
+            [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
+            for y,x in coors
+        ])
+        y_upper_bound = np.max(coors[:, 1])
+
         for i in range(cycle_num):
             if gen_image is not None:
                 scene_img = copy.deepcopy(gen_image)
@@ -477,25 +704,58 @@ if __name__ == '__main__':
             # update class
             cur_box["class"] = ref_obj_class
             # 根据ref obj lwn，生成3d坐标
-            center_x = random.uniform(RFU_CORE_BOX[0], RFU_CORE_BOX[1])
-            # NOTE: 后续循环只能比上次更近
-            y_upper_bound = RFU_CORE_BOX[3] if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
-            # y_lower_bound = RFU_CORE_BOX[2] if len(coor_3d_list) > 0 else 
-            y_lower_bound = (CYCLE_NUMS - i) * 10  # 0:30, 1:20, 2:10
-            # 由于防撞柱比较小，限制最远距离
-            if ref_obj_class == "collision_bar":
-                y_upper_bound = min(35, y_upper_bound)
-            # center_y = random.uniform(RFU_CORE_BOX[2], RFU_CORE_BOX[3])
-            center_y = random.uniform(y_lower_bound, y_upper_bound)
-            center = np.array([center_x, center_y, ref_lwh[2]/2])
+            # 直接在bev mask上采样坐标
+            # y [0, 10]区域内mask
+            y_upper_bound = y_upper_bound if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
+            y_lower_bound = min((CYCLE_NUMS - i) * 10,  min(y_upper_bound - 5, RFU_CORE_BOX[2]))  # 0:30, 1:20, 2:10
+            start_y = int((y_lower_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
+            end_y = int((y_upper_bound - BEV_RANGE[2]) / BEV_RESOLUTION)
+            cur_mask = np.zeros_like(bev_mask)
+            cur_mask[start_y:end_y, 0:BEV_width] = 1
+            bev_mask = bev_mask * cur_mask
+            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
+            coors = np.column_stack(np.where(bev_mask == 1))
+            coors = np.array([
+                [BEV_RANGE[0] + x * BEV_RESOLUTION, BEV_RANGE[2] + y * BEV_RESOLUTION]  # 将像素坐标转换为世界坐标
+                for y,x in coors
+            ])
+            if len(coors) == 0:
+                print(f"error: idx({idx}  nori_id({nori_id})   cycle_index({i})  y_upper_bound({y_upper_bound})  y_lower_bound({y_lower_bound})")
+                continue
+            center_x, center_y = coors[np.random.choice(coors.shape[0])]
+
+
+            # cycle_flag = True
+            # while cycle_flag:
+            #     center_x = random.uniform(RFU_CORE_BOX[0], RFU_CORE_BOX[1])
+            #     # NOTE: 后续循环只能比上次更近
+            #     y_upper_bound = RFU_CORE_BOX[3] if len(coor_3d_list) == 0 else coor_3d_list[-1][1]
+            #     # y_lower_bound = RFU_CORE_BOX[2] if len(coor_3d_list) > 0 else 
+            #     y_lower_bound = (CYCLE_NUMS - i) * 10  # 0:30, 1:20, 2:10
+            #     # 由于防撞柱比较小，限制最远距离
+            #     if ref_obj_class == "collision_bar":
+            #         y_upper_bound = min(35, y_upper_bound)
+            #     # center_y = random.uniform(RFU_CORE_BOX[2], RFU_CORE_BOX[3])
+            #     center_y = random.uniform(y_lower_bound, y_upper_bound)
+            #     center = np.array([center_x, center_y, ref_lwh[2]/2] + ref_lwh + [0])
+            #     # 确保生成的3d坐标不在动态目标上
+            #     overlap, bev_mask, new_box_mask = check_new_box_in_bev_mask(center, bev_mask)
+            #     cycle_flag = (not overlap)  # overlap=True: 不相交（停止循环）  overlap=False: 相交（接着循环）
+            # cv2.imwrite(f"test/test_{nori_id}_{i}_bev_mask_all.png", bev_mask*255)
+            # cv2.imwrite(f"test/test_{nori_id}_{i}_box_mask_all.png", new_box_mask*255)
+            # total_mask = bev_mask | new_box_mask
+            # cv2.imwrite(f"test/test_{nori_id}_{i}_mask_all.png", total_mask*255)
+
             # update influence
             # cur_box["influence"] = "avoid"
+            center = np.array([center_x, center_y, ref_lwh[2]/2])
             cur_box["influence"] = get_label(center)
             coor_3d_list.append(center)
             # 默认朝向
             yaw = np.zeros(3)  # xyz euler
             yaw[2] = 0
             x1, y1, x2, y2 = get_3d_vertex(center, ref_lwh, yaw, trans_rfu2cam, K)
+            cur_box["3d_box"] = center.tolist() + ref_lwh + [yaw[2]]  # xyz lwh yaw
             # TODO: 根据后续框给前面的框添加遮挡属性
             # update rect
             cur_box["rects"]["xmin"] = x1
@@ -508,6 +768,7 @@ if __name__ == '__main__':
             # 根据3d坐标生成scene mask
             scene_mask = np.zeros((IMG_H, IMG_W, 3), np.uint8)
             scene_mask[y1:y2, x1:x2, :] = 255
+            cur_box["mask"] = (scene_mask[:, :, 0] / 255).astype(int)
 
             # reference image + reference mask
             # You could use the demo of SAM to extract RGB-A image with masks
@@ -539,23 +800,35 @@ if __name__ == '__main__':
             ref_image = cv2.resize(ref_image, (w,h))
             back_display = copy.deepcopy(back_image)
             cv2.rectangle(back_display, (x1, y1), (x2, y2), (0, 255, 0), 2, 2)
-            cv2.putText(back_display, f"({center})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
+            label = cur_box["influence"]
+            cv2.putText(back_display, f"({center} label:{label})", (x1, y1), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
             vis_image = cv2.hconcat([ref_image, back_display, gen_image])
-            cv2.imwrite(f"test/test_{nori_id}_{i}_all.png", vis_image[:,:,::-1])
+            # cv2.imwrite(f"test/test_{nori_id}_{i}_all.png", vis_image[:,:,::-1])
+            cv2.imwrite(refile.smart_path_join(local_dir, f"{nori_id}_{i}_all.png"), vis_image[:,:,::-1])
 
             # fill label info 
             new_scene_data[nori_id]["labels"]["boxes"].append(cur_box)
+        
+        # 添加遮挡属性
+        if len(new_scene_data[nori_id]["labels"]["boxes"]) > 1:
+            add_occ_attr(new_scene_data[nori_id]["labels"]["boxes"])
+        
+        for box in new_scene_data[nori_id]["labels"]["boxes"]:
+            box.pop("mask")
                             
-        save_path = refile.smart_path_join(PREFIX, TODAY, f"{nori_id}_fake.png")
+        save_path = refile.smart_path_join(img_dir, f"{nori_id}_fake.png")
         with refile.smart_open(save_path, 'wb') as file:
             file.write(jpeg.encode(gen_image[:,:,::-1]))
 
         
         # 4. fill label info for generated 
-        new_scene_data[nori_id]["labels"]['boxes_label_info']["skipped"] = False
+        # new_scene_data[nori_id]["labels"]['boxes_label_info']["skipped"] = False
         new_scene_data[nori_id]["img_path"] = save_path
 
     with refile.smart_open(json_save_path, "w") as f:
         json.dump(new_scene_data, f, indent=2)
+    
+    logger.info(f"success saving to {json_save_path}")
+    logger.info(f"success saving [images] to : {img_dir}")
     
 
