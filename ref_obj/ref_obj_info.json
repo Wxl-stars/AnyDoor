@@ -1,0 +1,118 @@
+{
+  "cone": [
+    {
+      "lwh": [
+        0.45,
+        0.45,
+        0.7
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/cone/test_0_image_mask.png"
+    },
+    {
+      "lwh": [
+        0.45,
+        0.45,
+        0.7
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/cone/cone_red.png"
+    },
+    {
+      "lwh": [
+        0.45,
+        0.45,
+        0.7
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/cone/cone_yellow.png"
+    }
+  ],
+  "anti_collision_barrel": [
+    {
+      "lwh": [
+        0.3,
+        0.3,
+        0.6
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/anti_collision_barrel/test_1730710957_image_mask.png"
+    }
+  ],
+  "water_horse": [
+    {
+      "lwh": [
+        1.3,
+        0.24,
+        0.72
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/water_horse/test_1730710863_image_mask.png"
+    },
+    {
+      "lwh": [
+        1.3,
+        0.24,
+        0.72
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/water_horse/water_horse_yellow.png"
+    }
+  ],
+  "collision_bar": [
+    {
+      "lwh": [
+        0.07,
+        0.07,
+        0.75
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/collision_bar/test_1730711068_image_mask.png"
+    },
+    {
+      "lwh": [
+        0.07,
+        0.07,
+        0.7
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/collision_bar/collision_bar_red_yellow.png"
+    },
+    {
+      "lwh": [
+        0.07,
+        0.07,
+        0.7
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/collision_bar/collision_bar_yellow_black.png"
+    },
+    {
+      "lwh": [
+        0.07,
+        0.07,
+        0.65
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/collision_bar/collision_bar_yellow_black_2.png"
+    }
+  ],
+  "construction_sign": [
+    {
+      "lwh": [
+        1.0,
+        0.4,
+        1.0
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/construction_sign/construction_sign_1.png"
+    },
+    {
+      "lwh": [
+        1.0,
+        0.4,
+        1.20
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/construction_sign/construction_sign_2.png"
+    }
+  ],
+  "fence": [
+    {
+      "lwh": [
+        1.5,
+        0.2,
+        1.0
+      ],
+      "ref_path": "s3://sdagent-shard-bj-baiducloud/wuxiaolei/vlm/generated/ref_imgs/fence/fence_yellow.png"
+    }
+  ]
+}
